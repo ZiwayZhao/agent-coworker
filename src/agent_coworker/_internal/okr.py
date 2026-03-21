@@ -120,6 +120,7 @@ def _recalc_okr_status(okr):
     krs = okr.get("key_results", [])
     if not krs:
         return
+    prev_status = okr.get("status")
     if all(kr["status"] == "completed" for kr in krs):
         okr["status"] = "completed"
     elif any(kr["status"] == "at_risk" for kr in krs):
@@ -128,6 +129,9 @@ def _recalc_okr_status(okr):
         okr["status"] = "in_progress"
     else:
         okr["status"] = "proposed"
+    # Mark transition for trust downgrade hook
+    if prev_status != "completed" and okr["status"] == "completed":
+        okr["_just_completed"] = True
 
 
 def get_overall_progress(okr: dict) -> int:

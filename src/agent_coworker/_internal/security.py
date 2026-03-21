@@ -202,6 +202,31 @@ class TrustManager:
                 visible.append(skill)
         return visible
 
+    # ── Trust downgrade ──
+
+    def downgrade_after_okr(self, peer_id: str, previous_tier: int = None):
+        """Downgrade a peer's trust after OKR completion.
+
+        Policy: after a collaboration OKR completes, the peer's trust
+        drops back to KNOWN (tier 1) unless they were already UNTRUSTED.
+        PRIVILEGED peers drop to INTERNAL first; call again on next
+        OKR completion to drop further.  Manual overrides (trust.json)
+        are respected — if the owner explicitly set a tier, we don't
+        auto-downgrade below it.
+        """
+        current = self.get_trust_tier(peer_id)
+        if current <= TrustTier.KNOWN:
+            return current  # Already at floor, nothing to do
+
+        # Step-down: PRIVILEGED → INTERNAL → KNOWN
+        new_tier = max(TrustTier.KNOWN, TrustTier(current - 1))
+        self.set_trust_override(peer_id, new_tier)
+        logger.info(
+            "OKR completed — trust downgraded: peer=%s %s→%s",
+            peer_id[:16], TrustTier(current).name, TrustTier(new_tier).name,
+        )
+        return new_tier
+
     # ── Trust request handling ──
 
     def handle_trust_request(self, peer_id: str, requested_tier: int,

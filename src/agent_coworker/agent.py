@@ -8,6 +8,7 @@ Each agent:
   5. Serves a local HTTP dashboard (React frontend + API)
 """
 
+import base64
 import json
 import mimetypes
 import os
@@ -1093,6 +1094,17 @@ class Agent:
         n_ok = sum(1 for r in results if r.get('success'))
         print(f"\n  ── Result: {'SUCCESS' if all_ok else 'PARTIAL'} ({n_ok}/{len(results)} steps) ──\n")
 
+        # ── OKR-complete trust downgrade ──
+        # After collaboration goal is achieved, step-down the peer's trust
+        # so they can no longer call skills that were only accessible during
+        # the collaboration.  Owner can always re-promote manually.
+        if all_ok and hasattr(self, '_trust'):
+            prev = self._trust.get_trust_tier(wallet_address)
+            new = self._trust.downgrade_after_okr(wallet_address)
+            if new < prev:
+                print(f"  ⤵ Trust auto-downgraded: {wallet_address[:16]}… "
+                      f"{prev}→{new} (OKR completed)")
+
         return {
             "goal": goal, "success": all_ok,
             "steps": steps, "results": results,
@@ -1500,6 +1512,24 @@ class Agent:
                     self._json({
                         "name": agent.name, "wallet": agent.wallet,
                         "skills": agent.executor.list_skills(), "version": "0.1.0",
+                    })
+
+                elif p == "/api/invite":
+                    invite_data = {
+                        "name": agent.name,
+                        "wallet": agent.wallet,
+                        "skills": [s["name"] for s in agent.executor.list_skills()],
+                        "v": "0.1.3",
+                    }
+                    code = base64.b64encode(json.dumps(invite_data, separators=(",", ":")).encode()).decode()
+                    # Short code: first 4 chars of wallet + agent name
+                    short = f"{agent.name}-{agent.wallet[2:6]}".lower()
+                    self._json({
+                        "invite_code": code,
+                        "short_code": short,
+                        "wallet": agent.wallet,
+                        "name": agent.name,
+                        "cli_command": f"coworker connect {code}",
                     })
 
                 elif p == "/api/peers":

@@ -26,6 +26,17 @@ MCP connects agents to tools. A2A connects agents in enterprises.<br/>
 <hr/>
 </div>
 
+## Who is this for?
+
+You already have an agent — Claude Code, Cursor, a custom bot, a CrewAI pipeline. Now you want to **collaborate with someone else's agent** to get something done together. But:
+
+- You don't know how to **decompose the goal** across two agents
+- You can't **see what's happening** during the collaboration
+- You don't want to **expose your prompts, code, or data** to do it
+- You don't have a **shared server** and don't want to set one up
+
+**CoWorker handles all of this.** Any Python agent becomes a collaboration node in one line. Goals auto-decompose. A dashboard shows everything. Skills stay private. No server needed.
+
 ## Why CoWorker?
 
 Existing agent protocols force you into a single process, a shared network, or a central broker. CoWorker is different — **three design choices** set it apart:
@@ -146,12 +157,26 @@ def summarize(text: str) -> dict:
 agent.serve()  # XMTP listener + dashboard on :8090
 ```
 
+### Share Your Invite Code
+
+```bash
+coworker invite
+#   Agent:  my-bot
+#   Wallet: 0x1a2b3c...
+#
+#   Short ID:     my-bot-1a2b
+#   CLI command:  coworker connect eyJuYW1lIjoi...
+#   Invite code:  eyJuYW1lIjoi...
+```
+
+Send the invite code to your collaborator — via chat, email, anywhere. No wallet address needed.
+
 ### Connect and Collaborate
 
 ```python
 agent2 = Agent("caller")
 
-# Discover — no IP, no DNS, just a wallet address
+# Connect using invite code (or wallet address)
 peer = agent2.connect("0xPEER_WALLET")
 print(peer["skills"])  # Only shows skills you're trusted to see
 

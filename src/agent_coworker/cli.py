@@ -210,18 +210,26 @@ def cmd_bridge(args):
 
 
 def cmd_invite(args):
-    """Generate an invite code (contains wallet address for XMTP connection)."""
+    """Generate an invite code for collaborators to connect."""
     config = _load_config()
     invite_data = {
         "name": config["name"],
         "wallet": config["wallet"],
-        "skills": [],
-        "version": VERSION,
+        "v": VERSION,
     }
-    code = base64.b64encode(json.dumps(invite_data).encode()).decode()
-    print(f"Share this with your collaborator:\n")
-    print(f"  coworker connect {config['wallet']}")
-    print(f"\nOr full invite code:\n  {code}")
+    code = base64.b64encode(json.dumps(invite_data, separators=(",", ":")).encode()).decode()
+    short = f"{config['name']}-{config['wallet'][2:6]}".lower()
+
+    print(f"\n  Agent:  {config['name']}")
+    print(f"  Wallet: {config['wallet']}")
+    print(f"\n  ── Share any of these ──\n")
+    print(f"  Short ID:     {short}")
+    print(f"  CLI command:  coworker connect {code}")
+    print(f"  Invite code:  {code}")
+    print(f"\n  Your collaborator runs:")
+    print(f"    pip install agent-coworker")
+    print(f"    coworker connect {code}")
+    print()
 
 
 def cmd_connect(args):
