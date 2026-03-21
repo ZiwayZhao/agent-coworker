@@ -11,7 +11,12 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
+
+# ── Demo bot (always online for new users to test) ────
+DEMO_BOT_NAME = "icy"
+DEMO_BOT_WALLET = "0x320ecc6f12c320e62ad8ca67882639b3182c5c99"
+DEMO_BOT_SKILLS = ["about", "translate", "search", "ping"]
 
 
 def _config_path() -> Path:
@@ -68,6 +73,132 @@ def _sync_wallet_address(xmtp_address: str):
                     json.dump(wallet, f, indent=2)
         except (json.JSONDecodeError, IOError):
             pass
+
+
+# ── Skill Templates ──────────────────────────────────────
+
+SKILL_TEMPLATES = {
+    "echo": {
+        "label": "Echo       — repeat back any input (simplest skill)",
+        "code": '''
+@agent.skill("echo", description="Repeat back any input",
+             input_schema={"text": "str"},
+             output_schema={"text": "str"})
+def echo(text: str) -> dict:
+    return {"text": text}
+''',
+    },
+    "summarize": {
+        "label": "Summarize  — shorten text to key points",
+        "code": '''
+@agent.skill("summarize", description="Summarize text to key points",
+             input_schema={"text": "str", "max_length": "int"},
+             output_schema={"summary": "str", "word_count": "int"})
+def summarize(text: str, max_length: int = 200) -> dict:
+    words = text.split()
+    if len(words) <= max_length // 5:
+        return {"summary": text, "word_count": len(words)}
+    shortened = " ".join(words[:max_length // 5]) + "..."
+    return {"summary": shortened, "word_count": len(shortened.split())}
+''',
+    },
+    "translate": {
+        "label": "Translate  — translate text between languages",
+        "code": '''
+@agent.skill("translate", description="Translate text between languages",
+             input_schema={"text": "str", "to_lang": "str"},
+             output_schema={"translated": "str", "from_lang": "str"})
+def translate(text: str, to_lang: str = "en") -> dict:
+    # Replace with your translation API (Google, DeepL, etc.)
+    return {"translated": f"[{to_lang}] {text}", "from_lang": "auto"}
+''',
+    },
+    "search": {
+        "label": "Search     — search for information",
+        "code": '''
+@agent.skill("search", description="Search for information on a topic",
+             input_schema={"query": "str"},
+             output_schema={"results": "list", "count": "int"})
+def search(query: str) -> dict:
+    # Replace with your search API (Google, Bing, etc.)
+    results = [f"Result 1 for: {query}", f"Result 2 for: {query}"]
+    return {"results": results, "count": len(results)}
+''',
+    },
+    "analyze": {
+        "label": "Analyze    — extract insights from data",
+        "code": '''
+@agent.skill("analyze", description="Analyze data and extract insights",
+             input_schema={"data": "str", "goal": "str"},
+             output_schema={"insights": "list", "confidence": "float"})
+def analyze(data: str, goal: str = "") -> dict:
+    topic = data or goal or "general"
+    return {
+        "insights": [
+            f"Key finding about {topic}",
+            f"Trend analysis for {topic}",
+        ],
+        "confidence": 0.85,
+    }
+''',
+    },
+}
+
+
+def _generate_bot(name: str, bot_path: Path):
+    """Generate a starter bot.py with user-selected skills."""
+    print("\n  ── Choose skills for your bot ──\n")
+    items = list(SKILL_TEMPLATES.items())
+    for i, (key, tmpl) in enumerate(items, 1):
+        print(f"    [{i}] {tmpl['label']}")
+    print(f"\n    [a] All of the above")
+    print(f"    [s] Skip — I'll write my own skills")
+
+    try:
+        choice = input("\n  Select skills (e.g. 1,3 or a): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        choice = "1"  # default to echo
+
+    selected = []
+    if choice == "a":
+        selected = [key for key, _ in items]
+    elif choice == "s":
+        selected = []
+    else:
+        for part in choice.replace(" ", "").split(","):
+            try:
+                idx = int(part) - 1
+                if 0 <= idx < len(items):
+                    selected.append(items[idx][0])
+            except ValueError:
+                pass
+
+    if not selected:
+        selected = ["echo"]  # always include at least echo
+
+    # Build bot.py
+    skill_code = ""
+    for key in selected:
+        skill_code += SKILL_TEMPLATES[key]["code"]
+
+    skill_names = ", ".join(selected)
+    content = f'''"""CoWorker Agent — {name}
+
+Skills: {skill_names}
+Dashboard: http://localhost:8090
+"""
+from agent_coworker import Agent
+
+agent = Agent("{name}")
+{skill_code}
+if __name__ == "__main__":
+    print(f"Starting {{agent.name}}...")
+    print(f"  Skills: {skill_names}")
+    print(f"  Dashboard: http://localhost:8090")
+    agent.serve()
+'''
+    with open(bot_path, "w") as f:
+        f.write(content)
 
 
 # ── Commands ──────────────────────────────────────────────
@@ -128,9 +259,21 @@ def cmd_init(args):
         print(f"  ⚠ Bridge setup failed: {e}")
         print("  (You can set it up later with: coworker bridge setup)")
 
+    # Generate starter bot.py
+    bot_path = Path.cwd() / "bot.py"
+    if not bot_path.exists():
+        _generate_bot(name, bot_path)
+        print(f"\n  ✓ Generated starter bot: {bot_path}")
+    else:
+        print(f"\n  ℹ bot.py already exists, skipping generation")
+
     print("\n  Next steps:")
-    print("    1. Start bridge:   coworker bridge start")
-    print("    2. Write your bot: python my_bot.py")
+    print("    1. Start bridge:     coworker bridge start")
+    print("    2. Try the demo:     coworker demo")
+    print("    3. Start your bot:   python bot.py")
+    print()
+    print(f"  A demo bot '{DEMO_BOT_NAME}' is online with skills: {', '.join(DEMO_BOT_SKILLS)}")
+    print(f"  Run 'coworker demo' to connect and try calling its skills.")
     print()
     print("  Note: Your wallet address above is a placeholder. The real XMTP")
     print("  address will be set automatically when the bridge first starts.")
@@ -356,6 +499,153 @@ def cmd_trust(args):
         print("Usage: coworker trust {list|set|remove}")
 
 
+def cmd_demo(args):
+    """Connect to the demo bot and test a skill call."""
+    print(f"\n  CoWorker Demo — connect to '{DEMO_BOT_NAME}' and test skills")
+    print(f"  {'─' * 50}\n")
+
+    # Check init
+    config_path = _config_path()
+    if not config_path.exists():
+        print("  Not initialized. Run first:")
+        print("    coworker init --name my-agent")
+        sys.exit(1)
+
+    # Check bridge
+    from ._internal.bridge import check_running
+    bridge = check_running(COWORKER_DIR)
+    if not bridge:
+        print("  Bridge not running. Starting...")
+        print("    Run: coworker bridge start")
+        print("    Then: coworker demo")
+        sys.exit(1)
+
+    config = _load_config()
+    print(f"  Your agent: {config['name']}")
+    print(f"  Demo bot:   {DEMO_BOT_NAME} ({DEMO_BOT_WALLET[:16]}...)")
+    print(f"  Skills:     {', '.join(DEMO_BOT_SKILLS)}")
+    print()
+
+    # Step 1: Connect and discover
+    print("  [1/3] Connecting to demo bot...")
+    try:
+        from .agent import Agent
+        agent = Agent(config.get("name", "demo"), data_dir=str(COWORKER_DIR))
+        import threading
+        agent._running = True
+        try:
+            agent.client.receive(clear=True)
+        except Exception:
+            pass
+        agent._response_box.clear()
+        poll = threading.Thread(target=agent._poll_loop, daemon=True)
+        poll.start()
+        time.sleep(1)
+
+        peer = agent.connect(DEMO_BOT_WALLET, retries=3)
+
+        if "error" in peer:
+            print(f"  ⚠ Could not reach {DEMO_BOT_NAME} — it may be offline.")
+            print(f"  Try again later: coworker demo")
+            agent._running = False
+            sys.exit(1)
+
+        skills = peer.get("skills", [])
+        skill_names = [s["name"] if isinstance(s, dict) else s for s in skills]
+        print(f"  ✓ Connected! Found {len(skills)} skills: {', '.join(skill_names)}")
+
+        # Save peer
+        peers = {}
+        if _peers_path().exists():
+            try:
+                with open(_peers_path()) as f:
+                    peers = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        peers[DEMO_BOT_NAME] = {
+            "wallet": DEMO_BOT_WALLET,
+            "skills": skills,
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(_peers_path(), "w") as f:
+            json.dump(peers, f, indent=2)
+
+    except Exception as e:
+        print(f"  ✗ Connection failed: {e}")
+        sys.exit(1)
+
+    # Step 2: Call about — let icy introduce CoWorker
+    print(f"\n  [2/4] Calling {DEMO_BOT_NAME}.about('general')...")
+    print(f"        (You're calling a remote skill via XMTP — E2E encrypted)")
+    try:
+        result = agent.call(DEMO_BOT_WALLET, "about", {"topic": "general"}, timeout=15)
+        if "error" not in result:
+            data = result.get("result", result)
+            print(f"\n  icy says:")
+            answer = data.get("answer", str(data))
+            # Wrap text for readability
+            words = answer.split()
+            line = "    "
+            for w in words:
+                if len(line) + len(w) > 72:
+                    print(line)
+                    line = "    " + w
+                else:
+                    line += " " + w if line.strip() else w
+            if line.strip():
+                print(line)
+        else:
+            print(f"  ⚠ about() failed: {result.get('error', 'timeout')}")
+    except Exception as e:
+        print(f"  ⚠ about() failed: {e}")
+
+    # Step 3: Call translate — show a practical skill
+    print(f"\n  [3/4] Calling {DEMO_BOT_NAME}.translate('Hello world', to_lang='zh')...")
+    print(f"        (icy's translate code is private — you only see input/output)")
+    try:
+        result = agent.call(DEMO_BOT_WALLET, "translate", {
+            "text": "Hello world", "to_lang": "zh"
+        }, timeout=15)
+        if "error" not in result:
+            data = result.get("result", result)
+            print(f"  ✓ {json.dumps(data, ensure_ascii=False)}")
+        else:
+            print(f"  ⚠ translate() failed: {result.get('error', 'timeout')}")
+    except Exception as e:
+        print(f"  ⚠ translate() failed: {e}")
+
+    # Step 4: Call search — show trust-gated skill
+    print(f"\n  [4/4] Calling {DEMO_BOT_NAME}.search('coworker protocol')...")
+    print(f"        (This skill requires KNOWN trust — you were auto-granted)")
+    try:
+        result = agent.call(DEMO_BOT_WALLET, "search", {"query": "coworker protocol"}, timeout=15)
+        if "error" not in result:
+            data = result.get("result", result)
+            results_list = data.get("results", [])
+            for r in results_list:
+                print(f"    • {r}")
+        else:
+            print(f"  ⚠ search() failed: {result.get('error', 'timeout')}")
+    except Exception as e:
+        print(f"  ⚠ search() failed: {e}")
+
+    agent._running = False
+
+    print(f"\n  {'─' * 50}")
+    print(f"  Demo complete! What just happened:")
+    print(f"    ✓ Connected to icy across the internet (XMTP)")
+    print(f"    ✓ Discovered skills without seeing icy's code")
+    print(f"    ✓ Called 3 remote skills — E2E encrypted")
+    print(f"    ✓ Trust was checked before each call")
+    print()
+    print(f"  Now try it yourself:")
+    print(f"    1. python bot.py              Start your own agent")
+    print(f"    2. coworker invite             Share your invite code")
+    print(f"    3. Your friend runs:           coworker connect <code>")
+    print(f"    4. They call your skills — without seeing your code!")
+    print()
+
+
 def cmd_version(args):
     """Print version."""
     print(f"coworker-protocol {VERSION}")
@@ -375,12 +665,16 @@ def main():
   coworker trust set 0xPEER known    Grant 'known' trust to a peer
   coworker status                    Check agent & bridge status
 
-workflow:
+quick start:
   1. coworker init --name my-bot     Initialize
-  2. Write bot.py with @agent.skill  Define skills
-  3. python bot.py                   Start agent (XMTP + dashboard)
-  4. Share invite code               Let collaborators connect
-  5. They run: coworker connect ...  Auto-discover skills & collaborate
+  2. coworker bridge start           Start XMTP networking
+  3. coworker demo                   Connect to demo bot & test skills
+
+full workflow:
+  1. Write bot.py with @agent.skill  Define your skills
+  2. python bot.py                   Start agent (XMTP + dashboard)
+  3. coworker invite                 Share invite code
+  4. Collaborator: coworker connect  Auto-discover & collaborate
 
 docs: https://github.com/ZiwayZhao/agent-coworker""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -484,6 +778,25 @@ examples:
     p_trust_rm = trust_sub.add_parser("remove", help="Remove trust override")
     p_trust_rm.add_argument("wallet", help="Peer wallet address (0x...)")
 
+    # demo
+    sub.add_parser("demo",
+        help="Connect to the demo bot and test skills",
+        description=f"""Connect to '{DEMO_BOT_NAME}', the official demo bot, and test skill calls.
+
+This is the fastest way to experience CoWorker. The demo bot is always
+online and has these skills:
+  ping       — Check if agent is alive
+  translate  — Translate text between languages
+  search     — Search the web for information
+
+The demo will:
+  1. Connect to {DEMO_BOT_NAME} via XMTP (auto-discover skills)
+  2. Call ping() to verify connectivity
+  3. Call translate('Hello world', to_lang='zh')
+
+Requires: coworker init + coworker bridge start""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+
     # version
     sub.add_parser("version", help="Print version")
 
@@ -496,6 +809,7 @@ examples:
         "invite": cmd_invite,
         "connect": cmd_connect,
         "trust": cmd_trust,
+        "demo": cmd_demo,
         "version": cmd_version,
     }
 
