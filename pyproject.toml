@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-coworker"
-version = "0.1.3"
+version = "0.2.0"
 description = "Wallet-to-wallet AI agent collaboration over XMTP — discover, call, and collaborate across the open internet."
 readme = "README.md"
 requires-python = ">=3.10"

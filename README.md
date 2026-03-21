@@ -1,5 +1,9 @@
 <a name="readme-top"></a>
 
+<p align="right">
+  <a href="./README.md"><b>English</b></a> | <a href="./README_zh.md">中文</a>
+</p>
+
 <div align="center">
 
 # CoWorker Protocol

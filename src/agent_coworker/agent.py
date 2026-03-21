@@ -859,6 +859,22 @@ class Agent:
             "result": None, "steps": [], "agents": None, "session": None, "cost": None,
         }
 
+        # ── Create/find collaboration group for live observation ──
+        collab_group_id = None
+        for gid, g in self._groups.items():
+            member_wallets = [m.get("wallet", "") for m in g.get("members", [])]
+            if wallet_address in member_wallets:
+                collab_group_id = gid
+                break
+
+        def _collab_msg(sender_wallet, sender_name, content):
+            """Post a message to the collaboration group for frontend observation."""
+            if collab_group_id:
+                self._store_group_message(
+                    collab_group_id, sender_wallet, sender_name,
+                    content, delivery_status="sent" if sender_wallet == self.wallet else "received",
+                )
+
         # 1. Discover peer skills
         print(f"\n  ── Collaboration: \"{goal}\" ──\n")
         print(f"  Step 1: Discovering peer skills...")
@@ -870,6 +886,27 @@ class Agent:
 
         peer_skills = peer.get("skills", [])
         peer_skill_names = [s["name"] if isinstance(s, dict) else s for s in peer_skills]
+        peer_name_early = peer.get("name", wallet_address[:12])
+
+        # If no group exists, create one for this collaboration
+        if not collab_group_id:
+            collab_group_id = _uid()
+            self._groups[collab_group_id] = {
+                "id": collab_group_id, "xmtp_group_id": collab_group_id,
+                "name": f"{self.name} x {peer_name_early}",
+                "members": [
+                    {"wallet": self.wallet, "name": self.name, "trust_tier": "self"},
+                    {"wallet": wallet_address, "name": peer_name_early,
+                     "trust_tier": _trust_tier_label(self.trust_manager.get_trust_tier(wallet_address))},
+                ],
+                "member_count": 2, "created_at": _now_iso(), "updated_at": _now_iso(),
+                "last_message_id": None, "last_message_at": None,
+            }
+
+        _collab_msg(self.wallet, self.name,
+                    f"[Collaboration] Goal: {goal}")
+        _collab_msg(self.wallet, self.name,
+                    f"[Discovery] Found {len(peer_skill_names)} skills on {peer_name_early}: {', '.join(peer_skill_names)}")
         my_skill_names = self.executor.skill_names
         peer_name = None
         for pn, pdata in self._load_peers().items():
@@ -966,6 +1003,11 @@ class Agent:
             "closed_at": None, "expires_at": _now_iso(),
         })
 
+        # Post OKR to group
+        step_summary = ", ".join(f"{s['skill']}({s['agent']})" for s in steps)
+        _collab_msg(self.wallet, self.name,
+                    f"[Plan] {len(steps)} steps: {step_summary}")
+
         # 3. Propose plan to peer
         print(f"\n  Step 2: Proposing plan ({len(steps)} steps)...")
         plan_corr = _uid()
@@ -989,6 +1031,8 @@ class Agent:
                             s["state"] = "active"
                             s["accepted_at"] = _now_iso()
                     print(f"  ✓ Peer accepted the plan")
+                    _collab_msg(wallet_address, peer_name_early,
+                                f"[Accept] Plan accepted — ready to execute")
                     break
                 elif resp.get("type") == "plan_reject":
                     reason = resp.get("payload", {}).get("reason", "unknown")
@@ -1014,6 +1058,11 @@ class Agent:
 
             print(f"  [{i+1}/{len(steps)}] {sk} ({agent_name}) ...", end=" ", flush=True)
 
+            # Post step-start to group
+            executor_wallet = self.wallet if is_local else wallet_address
+            _collab_msg(executor_wallet, agent_name,
+                        f"[Step {i+1}/{len(steps)}] Executing: {sk}")
+
             start_t = time.time()
             if is_local:
                 result = self.executor.execute(sk, step["input"])
@@ -1022,6 +1071,13 @@ class Agent:
 
             duration = (time.time() - start_t) * 1000
             success = result.get("success", False)
+
+            # Post step-result to group
+            output = result.get("result", result.get("output", ""))
+            preview = str(output)[:150] if output else "done"
+            status_icon = "✓" if success else "✗"
+            _collab_msg(executor_wallet, agent_name,
+                        f"[Step {i+1}/{len(steps)}] {status_icon} {sk} — {round(duration)}ms\n{preview}")
             step["result"] = result
             step["status"] = "done" if success else "failed"
             results.append(result)
@@ -1094,16 +1150,21 @@ class Agent:
         n_ok = sum(1 for r in results if r.get('success'))
         print(f"\n  ── Result: {'SUCCESS' if all_ok else 'PARTIAL'} ({n_ok}/{len(results)} steps) ──\n")
 
+        # Post completion to group
+        _collab_msg(self.wallet, self.name,
+                    f"[Complete] {'SUCCESS' if all_ok else 'PARTIAL'} — {n_ok}/{len(results)} steps succeeded")
+
         # ── OKR-complete trust downgrade ──
-        # After collaboration goal is achieved, step-down the peer's trust
-        # so they can no longer call skills that were only accessible during
-        # the collaboration.  Owner can always re-promote manually.
         if all_ok and hasattr(self, '_trust'):
             prev = self._trust.get_trust_tier(wallet_address)
             new = self._trust.downgrade_after_okr(wallet_address)
             if new < prev:
                 print(f"  ⤵ Trust auto-downgraded: {wallet_address[:16]}… "
                       f"{prev}→{new} (OKR completed)")
+                from ._internal.security import TrustTier
+                _collab_msg(self.wallet, self.name,
+                            f"[Trust] Auto-downgraded: {peer_name_early} "
+                            f"{TrustTier(prev).name}→{TrustTier(new).name} (OKR completed)")
 
         return {
             "goal": goal, "success": all_ok,

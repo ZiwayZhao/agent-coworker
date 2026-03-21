@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.1.2"
+VERSION = "0.2.0"
 
 
 def _config_path() -> Path:
@@ -366,35 +366,116 @@ def cmd_version(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="coworker",
-        description="coworker-protocol — peer-to-peer AI agent collaboration",
+        description="coworker-protocol — peer-to-peer AI agent collaboration over XMTP",
+        epilog="""examples:
+  coworker init --name my-bot        Create agent identity + install XMTP bridge
+  coworker bridge start              Start XMTP networking (E2E encrypted)
+  coworker invite                    Generate shareable invite code
+  coworker connect <invite-code>     Connect to a collaborator's agent
+  coworker trust set 0xPEER known    Grant 'known' trust to a peer
+  coworker status                    Check agent & bridge status
+
+workflow:
+  1. coworker init --name my-bot     Initialize
+  2. Write bot.py with @agent.skill  Define skills
+  3. python bot.py                   Start agent (XMTP + dashboard)
+  4. Share invite code               Let collaborators connect
+  5. They run: coworker connect ...  Auto-discover skills & collaborate
+
+docs: https://github.com/ZiwayZhao/agent-coworker""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
 
     # init
-    p_init = sub.add_parser("init", help="Initialize agent")
-    p_init.add_argument("--name", default=None, help="Agent name")
-    p_init.add_argument("--force", action="store_true", help="Force re-initialization")
+    p_init = sub.add_parser("init",
+        help="Initialize agent identity and XMTP bridge",
+        description="""Create a new agent identity (wallet + config) and install the XMTP bridge.
+
+This generates:
+  ~/.coworker/config.json   Agent name + wallet address
+  ~/.coworker/wallet.json   Private key (never shared)
+  ~/.coworker/bridge/       XMTP bridge (Node.js)
+
+Requires Node.js >= 22 for XMTP networking.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_init.add_argument("--name", default=None, help="Agent name (default: 'agent')")
+    p_init.add_argument("--force", action="store_true", help="Force re-initialization (overwrites existing config)")
 
     # status
-    sub.add_parser("status", help="Show agent status")
+    sub.add_parser("status",
+        help="Show agent status, peers, and bridge info",
+        description="""Display current agent identity, connected peers count,
+and XMTP bridge status (running/stopped, port, address).""")
 
     # bridge
-    p_bridge = sub.add_parser("bridge", help="Manage XMTP bridge")
+    p_bridge = sub.add_parser("bridge",
+        help="Manage XMTP bridge (start/stop/status/setup)",
+        description="""The XMTP bridge is a Node.js process that connects your agent
+to the XMTP network for E2E encrypted, cross-network messaging.
+
+actions:
+  start    Start the bridge process (listens on localhost)
+  stop     Stop the bridge process
+  status   Check if bridge is running
+  setup    Re-install bridge dependencies (npm install)
+
+The bridge auto-starts when you call agent.serve(). Use this
+command for manual control or troubleshooting.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     p_bridge.add_argument("action", choices=["start", "stop", "status", "setup"],
                           help="Bridge action")
     p_bridge.add_argument("--env", default="dev", choices=["dev", "production"],
-                          help="XMTP environment")
+                          help="XMTP environment (default: dev)")
 
     # invite
-    sub.add_parser("invite", help="Generate invite / wallet address")
+    sub.add_parser("invite",
+        help="Generate invite code for collaborators",
+        description="""Generate a shareable invite code that others can use to connect.
+
+The invite code is a base64-encoded JSON containing your agent name
+and wallet address. Share it via chat, email, or any channel.
+
+Your collaborator runs:
+  coworker connect <invite-code>
+
+No wallet address needed — the code contains everything.""")
 
     # connect
-    p_connect = sub.add_parser("connect", help="Connect to a peer")
-    p_connect.add_argument("target", help="Wallet address (0x...) or invite code")
-    p_connect.add_argument("--name", default=None, help="Peer name")
+    p_connect = sub.add_parser("connect",
+        help="Connect to a peer agent by invite code or wallet",
+        description="""Connect to another agent using their invite code or wallet address.
+
+examples:
+  coworker connect eyJuYW1lIjoi...   Connect via invite code
+  coworker connect 0xAbCd...1234     Connect via wallet address
+
+If the XMTP bridge is running, skills are auto-discovered.
+Otherwise, the peer is saved and discovery happens on next connect.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_connect.add_argument("target", help="Invite code (base64) or wallet address (0x...)")
+    p_connect.add_argument("--name", default=None, help="Custom name for this peer")
 
     # trust
-    p_trust = sub.add_parser("trust", help="Manage peer trust tiers")
+    p_trust = sub.add_parser("trust",
+        help="Manage peer trust tiers (controls skill visibility)",
+        description="""Control which skills each peer can see and call.
+
+trust tiers:
+  untrusted (0)   Can ping only, sees NO skills (default for new peers)
+  known (1)       Can see and call skills marked min_trust_tier=1
+  internal (2)    Can query context, deep collaboration
+  privileged (3)  Full access to all skills — grant carefully
+
+Trust auto-downgrades after OKR completion:
+  PRIVILEGED → INTERNAL → KNOWN (never below KNOWN)
+
+examples:
+  coworker trust list                     Show all trust overrides
+  coworker trust set 0xPEER known         Grant 'known' access
+  coworker trust set 0xPEER privileged    Grant full access
+  coworker trust remove 0xPEER            Reset to default (untrusted)""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     trust_sub = p_trust.add_subparsers(dest="trust_action")
     trust_sub.add_parser("list", help="List all trust overrides")
     p_trust_set = trust_sub.add_parser("set", help="Set trust tier for a peer")
