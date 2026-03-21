@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-coworker"
+version = "0.1.3"
+description = "Wallet-to-wallet AI agent collaboration over XMTP — discover, call, and collaborate across the open internet."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Ziway Zhao" }
+]
+keywords = ["agent", "ai", "xmtp", "p2p", "collaboration", "protocol", "wallet", "encrypted"]
+dependencies = []
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Internet",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Security :: Cryptography",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Distributed Computing",
+]
+
+[project.urls]
+Homepage = "https://github.com/ZiwayZhao/agent-coworker"
+Documentation = "https://github.com/ZiwayZhao/agent-coworker#quickstart"
+Source = "https://github.com/ZiwayZhao/agent-coworker"
+Issues = "https://github.com/ZiwayZhao/agent-coworker/issues"
+
+[project.scripts]
+coworker = "agent_coworker.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov",
+  "ruff>=0.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_coworker"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+# Bridge JS and frontend dist are auto-included via packages = ["src/agent_coworker"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/README.md",
+  "/LICENSE",
+  "/pyproject.toml",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

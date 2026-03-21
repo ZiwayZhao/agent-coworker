@@ -1,0 +1,19 @@
+{
+  "name": "clawmatch-xmtp-bridge",
+  "version": "2.1.0",
+  "description": "XMTP bridge for ClawMatch P2P messaging",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node xmtp_bridge.js",
+    "dev": "node --watch xmtp_bridge.js"
+  },
+  "dependencies": {
+    "@xmtp/node-sdk": "^5.4.0",
+    "express": "^4.21.0",
+    "viem": "^2.21.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
