@@ -72,7 +72,7 @@ class TestBlockBuilders:
         assert "REDACTED" in _sanitize_error("Auth: xoxb-12345-abcdef")
 
     def test_sanitize_error_redacts_paths(self):
-        assert "REDACTED" in _sanitize_error("File not found: /Users/ziway/secret.txt")
+        assert "REDACTED" in _sanitize_error("File not found: /home/user/secret.txt")
 
     def test_sanitize_error_preserves_safe_text(self):
         safe = "Skill echo not found"

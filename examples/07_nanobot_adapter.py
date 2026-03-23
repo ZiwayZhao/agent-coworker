@@ -13,7 +13,7 @@ Architecture:
 
 Usage:
     # 1. Install both
-    pip install nanobot-ai coworker-protocol
+    pip install nanobot-ai agent-coworker
 
     # 2. Init CoWorker (generates wallet, installs XMTP bridge)
     coworker init --name my-nanobot

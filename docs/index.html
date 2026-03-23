@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CoWorker Protocol — Peer-to-Peer AI Agent Collaboration</title>
+<meta name="description" content="Connect AI agents across the open internet. Peer-to-peer, E2E encrypted, zero cost. Skill-as-API with privacy.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --surface: #141414;
+  --border: #222;
+  --text: #ededed;
+  --text-2: #888;
+  --accent: #fff;
+  --green: #00d47b;
+  --blue: #3b82f6;
+  --purple: #a78bfa;
+  --orange: #f59e0b;
+  --red: #ef4444;
+  --radius: 12px;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', -apple-system, sans-serif;
+  --sans-zh: 'Noto Sans SC', 'Inter', -apple-system, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+body.lang-zh { font-family: var(--sans-zh); }
+a { color: var(--text); text-decoration: none; }
+code, pre { font-family: var(--mono); }
+.container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* ── Nav ── */
+nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; backdrop-filter: blur(20px); background: rgba(10,10,10,0.8); border-bottom: 1px solid var(--border); }
+nav .inner { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; max-width: 1120px; margin: 0 auto; }
+nav .logo { font-weight: 700; font-size: 16px; letter-spacing: -0.03em; }
+nav .links { display: flex; gap: 24px; font-size: 14px; color: var(--text-2); align-items: center; }
+nav .links a:hover { color: var(--text); }
+nav .cta { background: #fff; color: #000; padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; transition: opacity .15s; }
+nav .cta:hover { opacity: .85; }
+.lang-toggle { background: transparent; border: 1px solid var(--border); color: var(--text-2); padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: var(--sans); letter-spacing: 0.02em; }
+.lang-toggle:hover { border-color: #444; color: var(--text); }
+.lang-toggle .active-lang { color: var(--text); }
+
+/* ── Hero ── */
+.hero { padding: 160px 0 80px; text-align: center; }
+.hero h1 { font-size: clamp(40px, 6vw, 72px); font-weight: 800; letter-spacing: -0.04em; line-height: 1.05; margin-bottom: 20px; }
+.hero h1 span { background: linear-gradient(135deg, #fff 40%, #888 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.hero p { font-size: 18px; color: var(--text-2); max-width: 580px; margin: 0 auto 40px; }
+.hero-code { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 32px; text-align: left; font-family: var(--mono); font-size: 14px; line-height: 1.8; color: var(--text-2); }
+.hero-code .cmd { color: var(--green); }
+.hero-code .comment { color: #555; }
+.badge-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 32px; flex-wrap: wrap; }
+.badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; border: 1px solid var(--border); color: var(--text-2); }
+
+/* ── Features ── */
+.features { padding: 80px 0; }
+.features h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 12px; }
+.features .sub { text-align: center; color: var(--text-2); margin-bottom: 48px; font-size: 16px; }
+.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; transition: border-color .2s; }
+.feature-card:hover { border-color: #444; }
+.feature-card .icon { font-size: 28px; margin-bottom: 14px; }
+.feature-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.feature-card p { font-size: 14px; color: var(--text-2); line-height: 1.5; }
+
+/* ── Demo Section (Terminal) ── */
+.demo { padding: 80px 0; }
+.demo h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 12px; }
+.demo .sub { text-align: center; color: var(--text-2); margin-bottom: 48px; font-size: 16px; }
+.terminal { background: #0d0d0d; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; max-width: 820px; margin: 0 auto; }
+.terminal-bar { display: flex; align-items: center; gap: 6px; padding: 12px 16px; background: #161616; border-bottom: 1px solid var(--border); }
+.terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+.terminal-dot.r { background: #ff5f56; }
+.terminal-dot.y { background: #ffbd2e; }
+.terminal-dot.g { background: #27c93f; }
+.terminal-title { margin-left: 8px; font-size: 12px; color: #555; font-family: var(--mono); }
+.terminal-body { padding: 20px 24px; font-family: var(--mono); font-size: 13px; line-height: 1.7; overflow-x: auto; }
+.terminal-body .g { color: var(--green); }
+.terminal-body .b { color: var(--blue); }
+.terminal-body .y { color: var(--orange); }
+.terminal-body .p { color: var(--purple); }
+.terminal-body .dim { color: #555; }
+.terminal-body .white { color: #ededed; }
+.terminal-body .bold { font-weight: 600; }
+
+/* ── Skill-as-API ── */
+.skill-api { padding: 80px 0; }
+.skill-api h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 12px; }
+.skill-api .sub { text-align: center; color: var(--text-2); margin-bottom: 48px; font-size: 16px; }
+.api-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 920px; margin: 0 auto; }
+.api-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.api-box-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.api-box-header .dot { width: 8px; height: 8px; border-radius: 50%; }
+.api-box-body { padding: 16px 20px; font-family: var(--mono); font-size: 12px; line-height: 1.7; }
+.lock-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(239,68,68,0.15); color: var(--red); margin-left: auto; }
+.open-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(0,212,123,0.15); color: var(--green); margin-left: auto; }
+
+/* ── Comparison Table ── */
+.comparison { padding: 80px 0; }
+.comparison h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 48px; }
+.table-wrap { overflow-x: auto; max-width: 920px; margin: 0 auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--text-2); font-weight: 500; font-size: 13px; }
+td { padding: 12px 16px; border-bottom: 1px solid #1a1a1a; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.check { color: var(--green); }
+.cross { color: var(--red); opacity: .6; }
+.highlight-col { background: rgba(255,255,255,0.03); }
+
+/* ── Trust ── */
+.trust { padding: 80px 0; }
+.trust h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 12px; }
+.trust .sub { text-align: center; color: var(--text-2); margin-bottom: 48px; font-size: 16px; }
+.trust-tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 820px; margin: 0 auto; }
+.tier-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 20px; text-align: center; }
+.tier-card .level { font-size: 32px; margin-bottom: 8px; }
+.tier-card .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.tier-card .desc { font-size: 12px; color: var(--text-2); }
+
+/* ── Dashboard Section ── */
+.dashboard { padding: 80px 0; }
+.dashboard h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; text-align: center; margin-bottom: 12px; }
+.dashboard .sub { text-align: center; color: var(--text-2); margin-bottom: 48px; font-size: 16px; max-width: 680px; margin-left: auto; margin-right: auto; }
+.dash-pages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 820px; margin: 0 auto 48px; }
+.dash-page { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; text-align: center; transition: border-color .2s; }
+.dash-page:hover { border-color: #444; }
+.dash-page .page-icon { font-size: 28px; margin-bottom: 10px; }
+.dash-page .page-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.dash-page .page-desc { font-size: 12px; color: var(--text-2); }
+.dash-page.highlight { border-color: var(--blue); background: rgba(59,130,246,0.05); }
+.dash-page.highlight .page-name { color: var(--blue); }
+.new-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; background: var(--blue); color: #fff; margin-left: 6px; vertical-align: middle; letter-spacing: 0.05em; }
+.dash-features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.dash-feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; transition: border-color .2s; }
+.dash-feature-card:hover { border-color: #444; }
+.dash-feature-card .icon { font-size: 24px; margin-bottom: 12px; }
+.dash-feature-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.dash-feature-card p { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+
+/* ── CTA ── */
+.cta-section { padding: 80px 0; text-align: center; }
+.cta-section h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 16px; }
+.cta-section p { color: var(--text-2); margin-bottom: 32px; }
+.btn-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { padding: 12px 28px; border-radius: 10px; font-size: 15px; font-weight: 600; transition: all .15s; display: inline-flex; align-items: center; gap: 8px; }
+.btn-primary { background: #fff; color: #000; }
+.btn-primary:hover { opacity: .85; }
+.btn-secondary { border: 1px solid var(--border); color: var(--text); }
+.btn-secondary:hover { border-color: #444; }
+
+/* ── Footer ── */
+footer { padding: 40px 0; border-top: 1px solid var(--border); text-align: center; font-size: 13px; color: #555; }
+footer a { color: var(--text-2); }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .feature-grid { grid-template-columns: 1fr; }
+  .api-compare { grid-template-columns: 1fr; }
+  .trust-tiers { grid-template-columns: repeat(2, 1fr); }
+  .dash-pages { grid-template-columns: repeat(2, 1fr); }
+  .dash-features-grid { grid-template-columns: 1fr; }
+  nav .links { display: none; }
+  .lang-toggle { position: absolute; right: 140px; top: 50%; transform: translateY(-50%); }
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="inner">
+    <div class="logo">CoWorker</div>
+    <div class="links">
+      <a href="#features" data-en="Features" data-zh="特性">Features</a>
+      <a href="#demo" data-en="Demo" data-zh="演示">Demo</a>
+      <a href="#dashboard" data-en="Dashboard" data-zh="控制台">Dashboard</a>
+      <a href="#skill-api" data-en="Skill-as-API" data-zh="Skill-as-API">Skill-as-API</a>
+      <a href="#comparison" data-en="Compare" data-zh="对比">Compare</a>
+      <a href="#invite" data-en="Invite" data-zh="邀请码">Invite</a>
+      <a href="https://github.com/ZiwayZhao/agent-coworker">GitHub</a>
+      <button class="lang-toggle" onclick="toggleLang()"><span id="lang-label">EN / <span class="active-lang">中文</span></span></button>
+    </div>
+    <a class="cta" href="https://pypi.org/project/agent-coworker/">pip install →</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="badge-row">
+      <span class="badge" data-en="Black-Box Skills" data-zh="黑箱技能">Black-Box Skills</span>
+      <span class="badge" data-en="Revocable Trust" data-zh="可回收权限">Revocable Trust</span>
+      <span class="badge" data-en="E2E Encrypted" data-zh="端到端加密">E2E Encrypted</span>
+      <span class="badge" data-en="No Central Server" data-zh="无中心服务器">No Central Server</span>
+    </div>
+    <h1><span data-en="Skill-as-API:<br>Call skills, not expose code" data-zh="Skill-as-API:<br>调用技能，不暴露代码">Skill-as-API:<br>Call skills, not expose code</span></h1>
+    <p data-en="CoWorker lets agents call each other's skills across the open internet.<br>Peers see <strong>input/output schema only</strong> — your code, prompts, and logic are not transmitted." data-zh="CoWorker 让 Agent 在开放互联网上互相调用技能。<br>对方只能看到<strong>输入输出 schema</strong> — 你的代码、提示词和逻辑不会被传输。">CoWorker lets agents call each other's skills across the open internet.<br>Peers see <strong>input/output schema only</strong> — your code, prompts, and logic are not transmitted.</p>
+    <div class="hero-code">
+      <span class="comment" data-en="# 4 commands to cross-network agent collaboration" data-zh="# 4 条命令，实现跨网络智能体协作"># 4 commands to cross-network agent collaboration</span><br>
+      <span class="cmd">$</span> pip install agent-coworker<br>
+      <span class="cmd">$</span> coworker init --name my-bot<br>
+      <span class="cmd">$</span> coworker bridge start<br>
+      <span class="cmd">$</span> coworker demo <span class="comment" data-en="# → connects to icy, calls skills across the internet" data-zh="# → 连接 icy，跨网络调用技能"># → connects to icy, calls skills across the internet</span>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+  <div class="container">
+    <h2 data-en="How CoWorker Protects Your Business Secrets" data-zh="CoWorker 如何保护你的商业机密">How CoWorker Protects Your Business Secrets</h2>
+    <p class="sub" data-en="Most knowledge leaks happen after access is granted, not before." data-zh="大多数知识泄露发生在授权之后，而不是之前。">Most knowledge leaks happen after access is granted, not before.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">🔒</div>
+        <h3 data-en="Black-Box Skills" data-zh="黑箱技能">Black-Box Skills</h3>
+        <p data-en="Collaborators call your skills but only see the contract: name, schema, output. Your code, prompts, and internal logic are not transmitted by the protocol." data-zh="协作者调用你的技能，但只看到接口说明：名称、schema、输出。你的代码、提示词和内部逻辑不会被协议传输。">Collaborators call your skills but only see the contract: name, schema, output. Your code, prompts, and internal logic are not transmitted by the protocol.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">👁️</div>
+        <h3 data-en="Hidden Skills" data-zh="技能隐藏">Hidden Skills</h3>
+        <p data-en="Skills you don't expose are invisible — peers can't tell they exist. The protocol returns 'Unknown skill' for any hidden capability." data-zh="你没有公开的技能对方完全看不到——协议对隐藏技能统一返回「未知技能」。">Skills you don't expose are invisible — peers can't tell they exist. The protocol returns 'Unknown skill' for any hidden capability.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">⏳</div>
+        <h3 data-en="Temporary Access" data-zh="临时访问">Temporary Access</h3>
+        <p data-en="Trust auto-downgrades after OKR completion. Short-term collaboration does not silently become permanent access." data-zh="OKR 完成后信任自动降级。短期协作不会悄悄变成永久开放。">Trust auto-downgrades after OKR completion. Short-term collaboration does not silently become permanent access.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🤝</div>
+        <h3 data-en="Group Collaboration" data-zh="群组协作">Group Collaboration</h3>
+        <p data-en="Humans + AI agents in one encrypted group. Trust tiers visible to everyone. Dashboard shows who did what." data-zh="人类与 AI Agent 在同一个加密群组中协作。信任等级对所有人可见。Dashboard 展示每个人做了什么。">Humans + AI agents in one encrypted group. Trust tiers visible to everyone. Dashboard shows who did what.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🌐</div>
+        <h3 data-en="No Middle Layer" data-zh="没有中间层">No Middle Layer</h3>
+        <p data-en="No central server, no shared backend, no broker. Each agent runs independently. P2P over XMTP with E2E encryption." data-zh="没有中心服务器、没有共享后端、没有中介。每个 Agent 独立运行，通过 XMTP 点对点通信，全程端到端加密。">No central server, no shared backend, no broker. Each agent runs independently. P2P over XMTP with E2E encryption.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📊</div>
+        <h3 data-en="Observe, Don't Expose" data-zh="可观测，不暴露">Observe, Don't Expose</h3>
+        <p data-en="Built-in dashboard shows collaboration activity, messages, OKRs, and trust tiers — without exposing your internal implementation." data-zh="内置 Dashboard 展示协作活动、消息流、OKR 和信任等级——但不暴露你的内部实现。">Built-in dashboard shows collaboration activity, messages, OKRs, and trust tiers — without exposing your internal implementation.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Live Demo -->
+<section class="demo" id="demo">
+  <div class="container">
+    <h2 data-en="Live Cross-Network Test" data-zh="跨网络实测">Live Cross-Network Test</h2>
+    <p class="sub" data-en="Real test between Beijing (China Telecom) ↔ San Francisco (Alibaba Cloud) · XMTP Production · E2E Encrypted" data-zh="北京（中国电信）↔ 旧金山（阿里云）真实测试 · XMTP 生产网络 · 端到端加密">Real test between Beijing (China Telecom) ↔ San Francisco (Alibaba Cloud) · XMTP Production · E2E Encrypted</p>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot r"></div>
+        <div class="terminal-dot y"></div>
+        <div class="terminal-dot g"></div>
+        <span class="terminal-title">coworker demo — production network</span>
+      </div>
+      <div class="terminal-body">
+<span class="white bold">═══════════════════════════════════════════════════════</span>
+<span class="white bold">  CoWorker Protocol — Cross-Network Collaboration Test</span>
+<span class="white bold">═══════════════════════════════════════════════════════</span>
+<span class="dim">  Network: XMTP Production (E2E Encrypted)</span>
+<span class="dim">  Local:   ziway-test (Beijing, China)</span>
+<span class="dim">  Remote:  icy (San Francisco, US)</span>
+
+<span class="b bold">── TEST 1: Skill Discovery ──</span>
+  <span class="g">✓ Discovered 4 skills in 3.2s:</span>
+    • <span class="white">about</span> — Learn about CoWorker Protocol
+      <span class="dim">Input: {"topic": "str"}  |  Min trust: 0</span>
+    • <span class="white">translate</span> — Translate text between languages
+      <span class="dim">Input: {"text": "str", "to_lang": "str"}  |  Min trust: 1</span>
+    • <span class="white">search</span> — Search for information
+      <span class="dim">Input: {"query": "str"}  |  Min trust: 1</span>
+    • <span class="white">ping</span> — Check if agent is alive
+      <span class="dim">Input: {}  |  Min trust: 0</span>
+  <span class="y">Key: only SCHEMAS shared — never source code!</span>
+
+<span class="b bold">── TEST 2: Remote Skill Call — about() ──</span>
+  <span class="g">✓ Response in 1.8s:</span>
+    <span class="white">CoWorker Protocol enables AI agents to collaborate peer-to-peer</span>
+    <span class="white">over XMTP. Agents share skill schemas (never code), discover each</span>
+    <span class="white">other, and call remote skills with E2E encryption.</span>
+
+<span class="b bold">── TEST 3: Remote Skill Call — translate() ──</span>
+  <span class="dim">  ziway-test → icy: translate('AI agents can now collaborate', 'zh')</span>
+  <span class="g">✓ Response in 1.8s:</span>
+    <span class="white">Input:  'AI agents can now collaborate peer-to-peer'</span>
+    <span class="white">Output: '[翻译成中文]: AI agents can now collaborate peer-to-peer'</span>
+
+<span class="b bold">── TEST 4: Connectivity — ping() ──</span>
+  <span class="g">✓ Response in 2.8s:</span>
+    <span class="white">Status: pong  |  Agent: icy  |  Welcome to CoWorker!</span>
+
+<span class="b bold">── TEST 5: Remote Skill Call — search() ──</span>
+  <span class="g">✓ Response in 2.9s:</span>
+
+<span class="white bold">═══════════════════════════════════════════════════════</span>
+<span class="white bold">  RESULT: 5/5 tests passed</span>
+<span class="white bold">  Latency: 1.8 – 2.9s (after first contact established)</span>
+<span class="white bold">  Source code: NEVER transmitted</span>
+<span class="white bold">═══════════════════════════════════════════════════════</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Dashboard -->
+<section class="dashboard" id="dashboard">
+  <div class="container">
+    <h2 data-en="Frontend Dashboard" data-zh="可视化控制台">Frontend Dashboard</h2>
+    <p class="sub" data-en="6 pages to monitor, manage, and command your agent fleet. See every protocol message in real-time — discover, plan, execute, report." data-zh="6 个功能页面，监控、管理和指挥你的智能体集群。实时查看每一条协议消息 — 发现、规划、执行、汇报，一目了然。">6 pages to monitor, manage, and command your agent fleet. See every protocol message in real-time — discover, plan, execute, report.</p>
+
+    <!-- Real Dashboard Screenshots -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:48px; max-width:920px; margin-left:auto; margin-right:auto;">
+      <div style="border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);">
+        <img class="lang-img" data-src-en="assets/screenshot-home-en.png" data-src-zh="assets/screenshot-home-zh.png" src="assets/screenshot-home-en.png" alt="Dashboard Home" style="width:100%; display:block;">
+        <div style="padding:8px 12px; background:var(--surface); font-size:12px; color:var(--text-2);" data-en="Home — Activity Feed" data-zh="首页 — 活动流">Home — Activity Feed</div>
+      </div>
+      <div style="border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);">
+        <img class="lang-img" data-src-en="assets/screenshot-chat-en.png" data-src-zh="assets/screenshot-chat-zh.png" src="assets/screenshot-chat-en.png" alt="Dashboard Chat" style="width:100%; display:block;">
+        <div style="padding:8px 12px; background:var(--surface); font-size:12px; color:var(--text-2);" data-en="Chat — DM Protocol Messages (NEW)" data-zh="聊天 — DM 协议消息 (NEW)">Chat — DM Protocol Messages (NEW)</div>
+      </div>
+      <div style="border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);">
+        <img class="lang-img" data-src-en="assets/screenshot-team-en.png" data-src-zh="assets/screenshot-team-zh.png" src="assets/screenshot-team-en.png" alt="Dashboard Team" style="width:100%; display:block;">
+        <div style="padding:8px 12px; background:var(--surface); font-size:12px; color:var(--text-2);" data-en="Team — Trust Tier Management" data-zh="团队 — 信任等级管理">Team — Trust Tier Management</div>
+      </div>
+      <div style="border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);">
+        <img class="lang-img" data-src-en="assets/screenshot-goals-en.png" data-src-zh="assets/screenshot-goals-zh.png" src="assets/screenshot-goals-en.png" alt="Dashboard Goals" style="width:100%; display:block;">
+        <div style="padding:8px 12px; background:var(--surface); font-size:12px; color:var(--text-2);" data-en="Goals — OKR Tracking" data-zh="目标 — OKR 追踪">Goals — OKR Tracking</div>
+      </div>
+    </div>
+
+    <div class="dash-pages">
+      <div class="dash-page">
+        <div class="page-icon">🏠</div>
+        <div class="page-name" data-en="Home" data-zh="首页">Home</div>
+        <div class="page-desc" data-en="Activity Feed — live stream of all agent events" data-zh="活动流 — 所有智能体事件的实时动态">Activity Feed — live stream of all agent events</div>
+      </div>
+      <div class="dash-page">
+        <div class="page-icon">🎯</div>
+        <div class="page-name" data-en="Goals" data-zh="目标">Goals</div>
+        <div class="page-desc" data-en="OKR Tracking — collaboration objectives & key results" data-zh="OKR 追踪 — 协作目标与关键成果管理">OKR Tracking — collaboration objectives & key results</div>
+      </div>
+      <div class="dash-page">
+        <div class="page-icon">👥</div>
+        <div class="page-name" data-en="Team" data-zh="团队">Team</div>
+        <div class="page-desc" data-en="Team Management — peers, trust tiers, status" data-zh="团队管理 — 对端列表、信任等级、在线状态">Team Management — peers, trust tiers, status</div>
+      </div>
+      <div class="dash-page">
+        <div class="page-icon">📈</div>
+        <div class="page-name" data-en="Insights" data-zh="洞察">Insights</div>
+        <div class="page-desc" data-en="Analytics — collaboration stats, skill usage, latency" data-zh="数据分析 — 协作统计、技能调用、延迟指标">Analytics — collaboration stats, skill usage, latency</div>
+      </div>
+      <div class="dash-page highlight">
+        <div class="page-icon">💬</div>
+        <div class="page-name" data-en="Chat <span class='new-badge'>NEW</span>" data-zh="聊天 <span class='new-badge'>NEW</span>">Chat <span class="new-badge">NEW</span></div>
+        <div class="page-desc" data-en="DM + Group Chat — see every protocol message between agents in real-time" data-zh="私信 + 群聊 — 实时查看智能体之间的每一条协议消息">DM + Group Chat — see every protocol message between agents in real-time</div>
+      </div>
+      <div class="dash-page">
+        <div class="page-icon">⚙️</div>
+        <div class="page-name" data-en="Settings" data-zh="设置">Settings</div>
+        <div class="page-desc" data-en="Configuration — identity, visibility, preferences" data-zh="系统配置 — 身份、可见性、偏好设置">Configuration — identity, visibility, preferences</div>
+      </div>
+    </div>
+
+    <div class="dash-features-grid">
+      <div class="dash-feature-card">
+        <div class="icon">📡</div>
+        <h3 data-en="Activity Feed" data-zh="活动流">Activity Feed</h3>
+        <p data-en="Live stream of skill calls, trust changes, peer connections, and collaboration events." data-zh="实时展示技能调用、信任变更、对端连接和协作事件的动态流。">Live stream of skill calls, trust changes, peer connections, and collaboration events.</p>
+      </div>
+      <div class="dash-feature-card">
+        <div class="icon">🎯</div>
+        <h3 data-en="OKR Tracking" data-zh="OKR 追踪">OKR Tracking</h3>
+        <p data-en="Set collaboration goals, track key results, auto-downgrade trust when objectives are met." data-zh="设定协作目标，追踪关键成果，目标达成时自动降低信任等级。">Set collaboration goals, track key results, auto-downgrade trust when objectives are met.</p>
+      </div>
+      <div class="dash-feature-card">
+        <div class="icon">🛡️</div>
+        <h3 data-en="Trust Management" data-zh="信任管理">Trust Management</h3>
+        <p data-en="Visual 4-tier trust control. Promote, demote, or auto-manage peer trust levels." data-zh="可视化四级信任管控。手动或自动升降对端的信任等级。">Visual 4-tier trust control. Promote, demote, or auto-manage peer trust levels.</p>
+      </div>
+      <div class="dash-feature-card">
+        <div class="icon">💬</div>
+        <h3 data-en="DM Chat" data-zh="私信聊天">DM Chat</h3>
+        <p data-en="See every protocol message between agents — task requests, responses, collaboration phases, all in real-time." data-zh="实时查看智能体之间的每一条协议消息 — 任务请求、响应结果、协作阶段，清晰可见。">See every protocol message between agents — task requests, responses, collaboration phases, all in real-time.</p>
+      </div>
+      <div class="dash-feature-card">
+        <div class="icon">👁️</div>
+        <h3 data-en="Skill Visibility Toggle" data-zh="技能可见性开关">Skill Visibility Toggle</h3>
+        <p data-en="One-click show/hide skills. Hidden skills are completely invisible to peers." data-zh="一键控制技能的显示和隐藏。隐藏的技能对端完全不可见。">One-click show/hide skills. Hidden skills are completely invisible to peers.</p>
+      </div>
+      <div class="dash-feature-card">
+        <div class="icon">📊</div>
+        <h3 data-en="Metering" data-zh="用量统计">Metering</h3>
+        <p data-en="Track skill call counts, latency percentiles, error rates, and per-peer usage metrics." data-zh="追踪技能调用次数、延迟分位数、错误率和各对端的用量指标。">Track skill call counts, latency percentiles, error rates, and per-peer usage metrics.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Dashboard DM Preview -->
+<section class="demo">
+  <div class="container">
+    <h2 data-en="Real-Time Collaboration Dashboard" data-zh="实时协作控制台">Real-Time Collaboration Dashboard</h2>
+    <p class="sub" data-en="Watch your agent collaborate in real-time. Every protocol message visible — discover, plan, execute, report." data-zh="实时观察你的智能体协作过程。每条协议消息清晰可见 — 发现、规划、执行、汇报。">Watch your agent collaborate in real-time. Every protocol message visible — discover, plan, execute, report.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot r"></div>
+        <div class="terminal-dot y"></div>
+        <div class="terminal-dot g"></div>
+        <span class="terminal-title">localhost:8090/chat — DM Collaboration View</span>
+      </div>
+      <div class="terminal-body">
+<span class="white bold">聊天  |  1 conversation</span>
+<span class="dim">─────────────────────────────────────────────────</span>
+<span class="b">DM</span> <span class="white">icy</span>  <span class="dim">Trust: known · 4 msgs · Collab</span>
+
+<span class="dim">────── Messages ──────────────────────────────────</span>
+
+        <span class="y">11:18</span>  <span class="dim">about</span>  <span class="p">task_request</span>  <span class="b">Execute</span>  <span class="white bold">You →</span>
+           <span class="g">Call about({"topic": "general"})</span>
+
+        <span class="y">11:18</span>  <span class="dim">translate</span>  <span class="p">task_request</span>  <span class="b">Execute</span>  <span class="white bold">You →</span>
+           <span class="g">Call translate({"text": "AI agents collaborate", "to_lang": "zh"})</span>
+
+        <span class="y">11:18</span>  <span class="dim">translate</span>  <span class="p">task_response</span>  <span class="b">Execute</span>  <span class="white bold">← icy</span>
+           <span class="white">Result: {"translated": "[翻译成中文]: AI agents collaborate"}</span>
+
+        <span class="y">11:18</span>  <span class="dim">ping</span>  <span class="p">task_request</span>  <span class="b">Execute</span>  <span class="white bold">You →</span>
+           <span class="g">Call ping({})</span>
+
+<span class="dim">─────────────────────────────────────────────────</span>
+<span class="dim">ℹ Observe mode — Agents collaborate here.</span>
+<span class="dim">  Use Goals page or CLI to command your Agent.</span>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin-top:24px;">
+      <p style="color:var(--text-2); font-size:14px;" data-en="Every DM message between agents is visible: <strong>discover → plan → execute → report</strong>.<br>Protocol badges show message type and collaboration phase. Group chats also supported." data-zh="智能体之间的每条私信都清晰可见：<strong>发现 → 规划 → 执行 → 汇报</strong>。<br>协议标签展示消息类型和协作阶段。同时支持群组聊天。">
+        Every DM message between agents is visible: <strong>discover → plan → execute → report</strong>.<br>
+        Protocol badges show message type and collaboration phase. Group chats also supported.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- Skill-as-API -->
+<section class="skill-api" id="skill-api">
+  <div class="container">
+    <h2 data-en="Skill-as-API: Privacy by Design" data-zh="Skill-as-API：隐私优先设计">Skill-as-API: Privacy by Design</h2>
+    <p class="sub" data-en="Your code stays on your machine. Peers only see the interface — never the implementation." data-zh="你的代码留在本地。对端只能看到接口定义 — 永远接触不到具体实现。">Your code stays on your machine. Peers only see the interface — never the implementation.</p>
+
+    <div class="api-compare">
+      <div class="api-box">
+        <div class="api-box-header">
+          <span class="dot" style="background:var(--red)"></span>
+          <span data-en="icy's source code (PRIVATE)" data-zh="icy 的源代码（私有）">icy's source code (PRIVATE)</span>
+          <span class="lock-badge" data-en="🔒 Never transmitted" data-zh="🔒 永不传输">🔒 Never transmitted</span>
+        </div>
+        <div class="api-box-body">
+<span style="color:#555">"""icy_demo_bot.py — proprietary implementation"""</span>
+
+<span style="color:var(--purple)">@agent.skill</span>(<span style="color:var(--green)">"translate"</span>, ...)
+<span style="color:var(--blue)">def</span> <span style="color:var(--orange)">translate</span>(text, to_lang):
+    <span style="color:#555"># ── This code is NEVER shared ──</span>
+    lookup = {
+        <span style="color:var(--green)">"hello"</span>: {<span style="color:var(--green)">"zh"</span>: <span style="color:var(--green)">"你好"</span>, <span style="color:var(--green)">"ja"</span>: <span style="color:var(--green)">"こんにちは"</span>},
+        <span style="color:var(--green)">"world"</span>: {<span style="color:var(--green)">"zh"</span>: <span style="color:var(--green)">"世界"</span>, <span style="color:var(--green)">"ja"</span>: <span style="color:var(--green)">"世界"</span>},
+    }
+    <span style="color:var(--blue)">return</span> {<span style="color:var(--green)">"translated"</span>: result}
+        </div>
+      </div>
+
+      <div class="api-box">
+        <div class="api-box-header">
+          <span class="dot" style="background:var(--green)"></span>
+          <span data-en="What peers see (PUBLIC schema)" data-zh="对端可见内容（公开接口）">What peers see (PUBLIC schema)</span>
+          <span class="open-badge" data-en="✓ Safe to share" data-zh="✓ 安全共享">✓ Safe to share</span>
+        </div>
+        <div class="api-box-body">
+<span style="color:#555">// Skill discovery response (XMTP E2E)</span>
+
+{
+  <span style="color:var(--blue)">"name"</span>: <span style="color:var(--green)">"translate"</span>,
+  <span style="color:var(--blue)">"description"</span>: <span style="color:var(--green)">"Translate text"</span>,
+  <span style="color:var(--blue)">"input_schema"</span>: {
+    <span style="color:var(--blue)">"text"</span>: <span style="color:var(--green)">"str"</span>,
+    <span style="color:var(--blue)">"to_lang"</span>: <span style="color:var(--green)">"str"</span>
+  },
+  <span style="color:var(--blue)">"output_schema"</span>: {
+    <span style="color:var(--blue)">"translated"</span>: <span style="color:var(--green)">"str"</span>
+  },
+  <span style="color:var(--blue)">"min_trust_tier"</span>: <span style="color:var(--orange)">1</span>
+}
+
+<span style="color:#555">// No code. No prompts. No logic.</span>
+<span style="color:#555">// Just the interface contract.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Comparison -->
+<section class="comparison" id="comparison">
+  <div class="container">
+    <h2 data-en="How CoWorker Compares" data-zh="CoWorker 与其他协议的对比">How CoWorker Compares</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="highlight-col" style="color:var(--text)">CoWorker</th>
+            <th>MCP</th>
+            <th>A2A</th>
+            <th>CrewAI</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="color:var(--text-2)" data-en="Connects" data-zh="连接方式">Connects</td><td class="highlight-col"><strong data-en="Agent ↔ Agent" data-zh="智能体 ↔ 智能体">Agent ↔ Agent</strong></td><td data-en="Agent ↔ Tool" data-zh="智能体 ↔ 工具">Agent ↔ Tool</td><td data-en="Agent ↔ Agent" data-zh="智能体 ↔ 智能体">Agent ↔ Agent</td><td data-en="Agent ↔ Agent" data-zh="智能体 ↔ 智能体">Agent ↔ Agent</td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Network" data-zh="网络">Network</td><td class="highlight-col"><strong data-en="Open internet" data-zh="开放互联网">Open internet</strong></td><td data-en="Local" data-zh="本地">Local</td><td data-en="Enterprise HTTP" data-zh="企业 HTTP">Enterprise HTTP</td><td data-en="Single process" data-zh="单进程">Single process</td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Encryption" data-zh="加密">Encryption</td><td class="highlight-col"><span class="check">✓</span> E2E (XMTP MLS)</td><td data-en="Transport-only" data-zh="仅传输层">Transport-only</td><td data-en="Enterprise TLS" data-zh="企业 TLS">Enterprise TLS</td><td><span class="cross">✗</span> <span data-en="None" data-zh="无">None</span></td></tr>
+          <tr><td style="color:var(--text-2)" data-en="NAT traversal" data-zh="NAT 穿透">NAT traversal</td><td class="highlight-col"><span class="check">✓</span></td><td><span class="cross">✗</span></td><td data-en="Infra-dependent" data-zh="依赖基础设施">Infra-dependent</td><td><span class="cross">✗</span></td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Central server" data-zh="中心服务器">Central server</td><td class="highlight-col"><strong data-en="None" data-zh="无">None</strong></td><td data-en="MCP server" data-zh="MCP 服务器">MCP server</td><td data-en="Discovery service" data-zh="发现服务">Discovery service</td><td data-en="Runtime host" data-zh="运行时宿主">Runtime host</td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Skill privacy" data-zh="技能隐私">Skill privacy</td><td class="highlight-col"><strong data-en="Input/output only" data-zh="仅输入/输出">Input/output only</strong></td><td data-en="Full exposure" data-zh="完全暴露">Full exposure</td><td data-en="Schema-based" data-zh="基于 Schema">Schema-based</td><td data-en="Full exposure" data-zh="完全暴露">Full exposure</td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Skill visibility" data-zh="技能可见性">Skill visibility</td><td class="highlight-col"><span class="check">✓</span> <span data-en="Owner toggle" data-zh="自主开关">Owner toggle</span></td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td><td><span class="cross">✗</span></td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Trust mgmt" data-zh="信任管理">Trust mgmt</td><td class="highlight-col"><strong data-en="4-tier + auto ↓" data-zh="四级 + 自动降级">4-tier + auto ↓</strong></td><td><span class="cross">✗</span></td><td data-en="Enterprise IAM" data-zh="企业 IAM">Enterprise IAM</td><td><span class="cross">✗</span></td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Cost" data-zh="成本">Cost</td><td class="highlight-col"><strong data-en="Zero" data-zh="零">Zero</strong></td><td data-en="Server costs" data-zh="服务器成本">Server costs</td><td data-en="Infra costs" data-zh="基础设施成本">Infra costs</td><td data-en="Compute costs" data-zh="计算成本">Compute costs</td></tr>
+          <tr><td style="color:var(--text-2)" data-en="Dependencies" data-zh="依赖">Dependencies</td><td class="highlight-col"><strong data-en="Zero (stdlib)" data-zh="零（标准库）">Zero (stdlib)</strong></td><td data-en="Varies" data-zh="不定">Varies</td><td data-en="HTTP stack" data-zh="HTTP 协议栈">HTTP stack</td><td data-en="Heavy" data-zh="重量级">Heavy</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- Trust -->
+<section class="trust" id="trust">
+  <div class="container">
+    <h2 data-en="4-Tier Trust System" data-zh="四级信任体系">4-Tier Trust System</h2>
+    <p class="sub" data-en="Default deny. Auto-downgrade after collaboration completes. Trust is temporary by design." data-zh="默认拒绝。协作完成后自动降级。信任在设计上就是临时的。">Default deny. Auto-downgrade after collaboration completes. Trust is temporary by design.</p>
+    <div class="trust-tiers">
+      <div class="tier-card">
+        <div class="level">🔴</div>
+        <div class="name" data-en="UNTRUSTED (0)" data-zh="未信任 (0)">UNTRUSTED (0)</div>
+        <div class="desc" data-en="Default. Can ping only. Sees NO skills." data-zh="默认状态。仅可 ping。看不到任何技能。">Default. Can ping only. Sees NO skills.</div>
+      </div>
+      <div class="tier-card">
+        <div class="level">🟡</div>
+        <div class="name" data-en="KNOWN (1)" data-zh="已知 (1)">KNOWN (1)</div>
+        <div class="desc" data-en="Can discover and call exposed skills." data-zh="可发现并调用已公开的技能。">Can discover and call exposed skills.</div>
+      </div>
+      <div class="tier-card">
+        <div class="level">🔵</div>
+        <div class="name" data-en="INTERNAL (2)" data-zh="内部 (2)">INTERNAL (2)</div>
+        <div class="desc" data-en="Context queries. Deep collaboration." data-zh="可查询上下文。深度协作。">Context queries. Deep collaboration.</div>
+      </div>
+      <div class="tier-card">
+        <div class="level">🟢</div>
+        <div class="name" data-en="PRIVILEGED (3)" data-zh="特权 (3)">PRIVILEGED (3)</div>
+        <div class="desc" data-en="Full access. Must be granted manually." data-zh="完全访问权限。须手动授予。">Full access. Must be granted manually.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Invite Code -->
+<section class="demo" id="invite">
+  <div class="container">
+    <h2 data-en="Invite Codes: How Agents Find Each Other" data-zh="邀请码：Agent 之间如何互相发现">Invite Codes: How Agents Find Each Other</h2>
+    <p class="sub" data-en="Generate once, share anywhere, reuse forever. No wallet addresses exposed." data-zh="一次生成，随处分享，永久有效。不暴露任何钱包地址。">Generate once, share anywhere, reuse forever. No wallet addresses exposed.</p>
+
+    <div class="terminal" style="max-width:820px; margin:0 auto 32px;">
+      <div class="terminal-bar">
+        <div class="terminal-dot r"></div>
+        <div class="terminal-dot y"></div>
+        <div class="terminal-dot g"></div>
+        <span class="terminal-title">coworker invite + connect</span>
+      </div>
+      <div class="terminal-body">
+<span class="dim"># Step 1: You generate your invite code</span>
+<span class="g">$</span> <span class="white">coworker invite</span>
+  Agent:       <span class="b">my-bot</span>
+  Invite code: <span class="y">eyJuIjoibXktYm90IiwiaSI6IjdkMG...</span>
+  Short ID:    <span class="dim">my-bot-7d0a24d9</span>
+
+  <span class="dim">Your collaborator runs:</span>
+    <span class="g">pip install agent-coworker</span>
+    <span class="g">coworker connect eyJuIjoibXktYm90IiwiaSI6IjdkMG...</span>
+
+<span class="dim"># Step 2: Your friend connects using your code</span>
+<span class="g">$</span> <span class="white">coworker connect eyJuIjoibXktYm90IiwiaSI6IjdkMG...</span>
+  <span class="g">✓</span> Discovered: <span class="b">my-bot</span> (3 skills: summarize, translate, search)
+  <span class="g">✓</span> Trust: KNOWN (auto-granted)
+
+<span class="dim"># Step 3: Call each other's skills!</span>
+<span class="g">$</span> <span class="white">python -c "agent.call('eyJuIjoi...', 'summarize', {'text': 'Hello!'})"</span>
+  <span class="g">✓</span> {"summary": "Hello!"}  <span class="dim">← E2E encrypted, code stays private</span>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; max-width:820px; margin:0 auto;">
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; text-align:center;">
+        <div style="font-size:24px; margin-bottom:8px;">🔄</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text);" data-en="Reusable" data-zh="可重复使用">Reusable</div>
+        <div style="font-size:11px; color:var(--text-2); margin-top:4px;" data-en="Share with anyone, unlimited times" data-zh="分享给任何人，不限次数">Share with anyone, unlimited times</div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; text-align:center;">
+        <div style="font-size:24px; margin-bottom:8px;">🔒</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text);" data-en="Privacy-Safe" data-zh="隐私安全">Privacy-Safe</div>
+        <div style="font-size:11px; color:var(--text-2); margin-top:4px;" data-en="Only routing ID, no private keys" data-zh="仅含路由 ID，无私钥">Only routing ID, no private keys</div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; text-align:center;">
+        <div style="font-size:24px; margin-bottom:8px;">♻️</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text);" data-en="Permanent" data-zh="永久有效">Permanent</div>
+        <div style="font-size:11px; color:var(--text-2); margin-top:4px;" data-en="Same code every time, until you reinit" data-zh="始终不变，除非重新初始化">Same code every time, until you reinit</div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; text-align:center;">
+        <div style="font-size:24px; margin-bottom:8px;">📋</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text);" data-en="Share Anywhere" data-zh="随处分享">Share Anywhere</div>
+        <div style="font-size:11px; color:var(--text-2); margin-top:4px;" data-en="WeChat, Slack, README, QR code" data-zh="微信、飞书、GitHub、二维码">WeChat, Slack, README, QR code</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Try icy -->
+<section class="features" id="try-icy" style="padding:60px 0;">
+  <div class="container">
+    <h2 data-en="Try It Now: Connect to icy" data-zh="立即体验：连接 icy 演示 Bot">Try It Now: Connect to icy</h2>
+    <p class="sub" data-en="icy is our always-online demo bot. Call its skills without seeing its code — that's the point." data-zh="icy 是我们始终在线的演示 Bot。调用它的技能，但看不到它的代码——这就是重点。">icy is our always-online demo bot. Call its skills without seeing its code — that's the point.</p>
+
+    <div class="terminal" style="max-width:700px; margin:0 auto 24px;">
+      <div class="terminal-bar">
+        <div class="terminal-dot r"></div>
+        <div class="terminal-dot y"></div>
+        <div class="terminal-dot g"></div>
+        <span class="terminal-title" data-en="Connect to icy in 30 seconds" data-zh="30 秒连接 icy">Connect to icy in 30 seconds</span>
+      </div>
+      <div class="terminal-body">
+<span class="g">$</span> <span class="white">pip install agent-coworker</span>
+<span class="g">$</span> <span class="white">coworker init --name my-bot</span>
+<span class="g">$</span> <span class="white">coworker bridge start</span>
+<span class="g">$</span> <span class="white">coworker demo</span>
+<span class="dim">  ✓ Connected to icy (4 skills: about, translate, search, ping)</span>
+<span class="dim">  ✓ icy.about('general')    → CoWorker enables P2P agent...</span>
+<span class="dim">  ✓ icy.translate('Hello')  → [翻译成中文]: Hello</span>
+<span class="dim">  ✓ icy.search('protocol')  → 3 results</span>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:700px; margin:0 auto;">
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;" data-en="icy's Skills" data-zh="icy 的技能">icy's Skills</div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.8;">
+          <span style="color:var(--green);">about</span> <span data-en="— Learn about CoWorker" data-zh="— 了解 CoWorker 项目">— Learn about CoWorker</span><br>
+          <span style="color:var(--green);">translate</span> <span data-en="— Translate text (EN↔ZH↔JA↔KO)" data-zh="— 翻译文本（英↔中↔日↔韩）">— Translate text (EN↔ZH↔JA↔KO)</span><br>
+          <span style="color:var(--green);">search</span> <span data-en="— Search for information" data-zh="— 搜索信息">— Search for information</span><br>
+          <span style="color:var(--green);">ping</span> <span data-en="— Check connectivity" data-zh="— 检查连通性">— Check connectivity</span>
+        </div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;" data-en="What You Can Ask" data-zh="你可以问什么">What You Can Ask</div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.8;">
+          <code style="font-size:11px;">about('general')</code> <span data-en="— Project overview" data-zh="— 项目概述">— Project overview</span><br>
+          <code style="font-size:11px;">about('trust')</code> <span data-en="— Trust system explained" data-zh="— 信任体系详解">— Trust system explained</span><br>
+          <code style="font-size:11px;">about('skills')</code> <span data-en="— Skill-as-API explained" data-zh="— Skill-as-API 详解">— Skill-as-API explained</span><br>
+          <code style="font-size:11px;">about('collaboration')</code> <span data-en="— How agents collaborate" data-zh="— Agent 如何协作">— How agents collaborate</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="container">
+    <h2 data-en="Start Private-by-Design Collaboration" data-zh="开始一次默认私密的协作">Start Private-by-Design Collaboration</h2>
+    <p data-en="Install, connect to icy, and see how agents collaborate without exposing implementation." data-zh="安装、连接 icy 演示 Bot，看看 Agent 如何在不暴露实现的情况下协作。">Install, connect to icy, and see how agents collaborate without exposing implementation.</p>
+    <div class="btn-row">
+      <a class="btn btn-primary" href="https://pypi.org/project/agent-coworker/">pip install agent-coworker</a>
+      <a class="btn btn-secondary" href="https://github.com/ZiwayZhao/agent-coworker/" data-en="⭐ Star on GitHub" data-zh="⭐ GitHub 加星">⭐ Star on GitHub</a>
+      <a class="btn btn-secondary" href="https://github.com/ZiwayZhao/agent-coworker/tree/main/examples" data-en="View Examples" data-zh="查看示例">View Examples</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p data-en="CoWorker Protocol · MIT License · Made by <a href='https://github.com/ZiwayZhao'>Ziwei Zhao</a>, Dantong Liu, Xizhi Ding · Advisor: <a href='https://jarviswang94.github.io'>Wenxuan Wang</a> (RUC)" data-zh="CoWorker Protocol · MIT 开源协议 · Made by <a href='https://github.com/ZiwayZhao'>Ziwei Zhao</a>, Dantong Liu, Xizhi Ding · 指导老师: <a href='https://jarviswang94.github.io'>王文轩</a> (中国人民大学)">CoWorker Protocol · MIT License · Made by <a href="https://github.com/ZiwayZhao">Ziwei Zhao</a>, Dantong Liu, Xizhi Ding · Advisor: <a href="https://jarviswang94.github.io">Wenxuan Wang</a> (RUC)</p>
+  </div>
+</footer>
+
+<script>
+(function() {
+  // Detect language: zh-CN, zh-TW, zh → Chinese; otherwise English
+  var browserLang = navigator.language || navigator.userLanguage || 'en';
+  var isZh = /^zh/i.test(browserLang);
+  var currentLang = isZh ? 'zh' : 'en';
+
+  function applyLang(lang) {
+    currentLang = lang;
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    if (lang === 'zh') {
+      document.body.classList.add('lang-zh');
+    } else {
+      document.body.classList.remove('lang-zh');
+    }
+
+    // Update all elements with data-en / data-zh
+    var els = document.querySelectorAll('[data-en][data-zh]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      el.innerHTML = el.getAttribute('data-' + lang);
+    }
+
+    // Update toggle button label
+    var label = document.getElementById('lang-label');
+    if (label) {
+      if (lang === 'zh') {
+        label.innerHTML = 'EN / <span class="active-lang">中文</span>';
+      } else {
+        label.innerHTML = '<span class="active-lang">EN</span> / 中文';
+      }
+    }
+
+    // Swap screenshot images
+    var imgs = document.querySelectorAll('.lang-img[data-src-en][data-src-zh]');
+    for (var j = 0; j < imgs.length; j++) {
+      imgs[j].src = imgs[j].getAttribute('data-src-' + lang);
+    }
+
+    // Update page title
+    document.title = lang === 'zh'
+      ? 'CoWorker Protocol — 点对点 AI 智能体协作'
+      : 'CoWorker Protocol — Peer-to-Peer AI Agent Collaboration';
+  }
+
+  // Expose toggle function globally
+  window.toggleLang = function() {
+    applyLang(currentLang === 'en' ? 'zh' : 'en');
+  };
+
+  // Apply on load
+  applyLang(currentLang);
+})();
+</script>
+
+</body>
+</html>

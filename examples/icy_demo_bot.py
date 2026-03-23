@@ -161,7 +161,7 @@ def search(query: str) -> dict:
 def ping() -> dict:
     return {
         "status": "online",
-        "version": "0.2.0",
+        "version": "0.4.0",
         "message": "Hi! I'm icy, the CoWorker demo bot. "
                    "Try calling my skills: about, translate, search. "
                    "Run 'coworker demo' for a guided tour!",

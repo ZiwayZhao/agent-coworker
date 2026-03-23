@@ -172,6 +172,11 @@ class AgentFaxClient:
         result = _bridge_get(self.data_dir, "/can-message", {"address": wallet_address})
         return result.get("canMessage", False)
 
+    def get_inbox_id(self) -> str:
+        """Get this agent's XMTP inbox ID from the bridge."""
+        result = _bridge_get(self.data_dir, "/inbox-id")
+        return result.get("inboxId", "")
+
     def send(
         self,
         to_wallet: str,
@@ -180,7 +185,12 @@ class AgentFaxClient:
         correlation_id: str = None,
         ttl: int = 3600,
     ) -> dict:
-        """Send an AgentFax message to a wallet address."""
+        """Send a message to a wallet address or inbox ID.
+
+        The bridge accepts both formats:
+        - Wallet address (0x...): routes via Ethereum identifier
+        - Inbox ID (hex string): routes via XMTP inbox ID directly
+        """
         envelope = build_message(
             msg_type=msg_type,
             payload=payload,
@@ -272,6 +282,16 @@ class AgentFaxClient:
             "to": wallets,
             "content": json.dumps(envelope),
         })
+
+    def prewarm(self, target: str) -> dict:
+        """Pre-warm a DM conversation to reduce first-call latency.
+
+        Call this after discover succeeds to warm the return path.
+        """
+        try:
+            return _bridge_post(self.data_dir, "/prewarm", {"to": target})
+        except Exception:
+            return {"status": "failed"}
 
     def receive(self, since: str = None, clear: bool = False) -> List[dict]:
         """Receive AgentFax messages from the bridge inbox."""

@@ -4,15 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-coworker"
-version = "0.2.1"
-description = "Wallet-to-wallet AI agent collaboration over XMTP — discover, call, and collaborate across the open internet."
+version = "0.4.2"
+description = "Peer-to-peer AI agent collaboration over XMTP — discover, call, and collaborate across the open internet with E2E encryption."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-  { name = "Ziway Zhao" }
+  { name = "Ziwei Zhao", email = "ziwei.zhao@tum.de" },
+  { name = "Dantong Liu", email = "liudt921115@gmail.com" },
+  { name = "Xizhi Ding", email = "tarsxizhi@outlook.com" },
 ]
-keywords = ["agent", "ai", "xmtp", "p2p", "collaboration", "protocol", "wallet", "encrypted"]
+keywords = ["agent", "ai", "xmtp", "p2p", "collaboration", "protocol", "encrypted", "privacy"]
 dependencies = []
 
 classifiers = [

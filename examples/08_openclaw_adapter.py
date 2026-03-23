@@ -17,7 +17,7 @@ Architecture:
 
 Usage:
     # 1. Install CoWorker
-    pip install coworker-protocol
+    pip install agent-coworker
 
     # 2. Init (generates wallet + XMTP bridge)
     coworker init --name my-claw-agent

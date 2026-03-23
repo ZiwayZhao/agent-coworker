@@ -36,7 +36,7 @@ import path from "node:path";
 // Config
 // ---------------------------------------------------------------------------
 const PRIVATE_KEY = process.env.XMTP_PRIVATE_KEY;
-const XMTP_ENV = process.env.XMTP_ENV || "dev";
+const XMTP_ENV = process.env.XMTP_ENV || "production";
 const BRIDGE_PORT = parseInt(process.env.BRIDGE_PORT || "3500", 10);
 
 if (!PRIVATE_KEY) {
@@ -107,18 +107,47 @@ function ethIdentifier(address) {
   };
 }
 
-// Helper: get or create DM conversation with a wallet address
-async function getDm(targetAddress) {
-  const canMessageResult = await xmtpClient.canMessage([ethIdentifier(targetAddress)]);
-  const canSend = canMessageResult.get(targetAddress);
-  if (!canSend) {
-    throw new Error(`Address ${targetAddress} is not reachable on XMTP (${XMTP_ENV}).`);
+// DM cache — avoids repeated conversations.sync() + createDm on every send
+const dmCache = new Map();
+
+function normalizeTarget(target) {
+  return target.toLowerCase();
+}
+
+// Helper: get or create DM conversation — supports wallet address OR inbox ID
+// Uses dmCache to avoid cold-path on subsequent sends to the same target.
+async function getDm(target, opts = {}) {
+  const { forceSync = false } = opts;
+  const key = normalizeTarget(target);
+
+  // Cache hit — skip expensive sync
+  if (dmCache.has(key) && !forceSync) {
+    return dmCache.get(key);
   }
+
+  // Cold path — full sync + create
   await xmtpClient.conversations.sync();
-  const dm = await xmtpClient.conversations.createDmWithIdentifier(
-    ethIdentifier(targetAddress)
-  );
+
+  // Wallet address (0x...) → existing path
+  if (target.startsWith("0x")) {
+    const addr = target.toLowerCase();
+    const canMessageResult = await xmtpClient.canMessage([ethIdentifier(addr)]);
+    const canSend = canMessageResult.get(addr);
+    if (!canSend) {
+      throw new Error(`Address ${addr} is not reachable on XMTP (${XMTP_ENV}).`);
+    }
+    const dm = await xmtpClient.conversations.createDmWithIdentifier(
+      ethIdentifier(addr)
+    );
+    await dm.sync();
+    dmCache.set(key, dm);
+    return dm;
+  }
+
+  // Inbox ID → XMTP v3 native DM by inbox ID
+  const dm = await xmtpClient.conversations.createDm(target);
   await dm.sync();
+  dmCache.set(key, dm);
   return dm;
 }
 
@@ -207,6 +236,18 @@ const stream = await xmtpClient.conversations.streamAllMessages();
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// Pre-warm a DM conversation (reduces first-call latency)
+app.post("/prewarm", async (req, res) => {
+  try {
+    const { to } = req.body;
+    if (!to) return res.status(400).json({ error: "missing 'to'" });
+    const dm = await getDm(to, { forceSync: true });
+    res.json({ status: "warmed", to, conversationId: dm.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check
 app.get("/health", (_req, res) => {
   res.json({
@@ -219,22 +260,30 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// Get this agent's inbox ID (for privacy-preserving invite codes)
+app.get("/inbox-id", (_req, res) => {
+  res.json({
+    inboxId: xmtpClient?.inboxId || null,
+    address: walletAddress,
+  });
+});
+
 // Send text message via XMTP
 app.post("/send", async (req, res) => {
   try {
     const { to, content } = req.body;
     if (!to || !content) {
-      return res.status(400).json({ error: "missing 'to' (wallet address) or 'content'" });
+      return res.status(400).json({ error: "missing 'to' (wallet address or inbox ID) or 'content'" });
     }
-    const targetAddress = to.toLowerCase();
-    const dm = await getDm(targetAddress);
+    // getDm handles both wallet (0x...) and inbox ID formats
+    const dm = await getDm(to);
     const messageText = typeof content === "string" ? content : JSON.stringify(content);
     const msgId = await dm.sendText(messageText);
 
     res.json({
       status: "sent",
       messageId: msgId,
-      to: targetAddress,
+      to: to,
       conversationId: dm.id,
     });
   } catch (err) {

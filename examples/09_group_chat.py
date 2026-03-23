@@ -27,8 +27,6 @@ import time
 import json
 import threading
 
-sys.path.insert(0, "/Users/ziway/Downloads/AgentFax/sdk/src")
-
 from agent_coworker.agent import Agent, Group, _uid
 
 # ── Config ──

@@ -11,12 +11,36 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.2.1"
+VERSION = "0.4.2"
 
 # ── Demo bot (always online for new users to test) ────
 DEMO_BOT_NAME = "icy"
-DEMO_BOT_WALLET = "0x320ecc6f12c320e62ad8ca67882639b3182c5c99"
+# Invite code contains inbox ID only — no wallet address exposed
+DEMO_BOT_INVITE = "eyJuIjoiaWN5IiwiaSI6IjNmODYxOTE1YzAxYzNmMzM4MDdiMjAzN2FlNDdkZWU4MTA5MDc2ZDRlN2FiYmM5NTIyZjc3YmQzYzcyZDQ0M2QiLCJ2IjoiMC4zLjAifQ=="
 DEMO_BOT_SKILLS = ["about", "translate", "search", "ping"]
+
+
+def _decode_invite(code: str) -> dict:
+    """Decode an invite code.
+
+    New format (v0.3.0+): {"n": name, "i": inbox_id, "v": version}
+    Old format: {"name": name, "wallet": wallet_address}
+    """
+    import base64
+    data = json.loads(base64.b64decode(code))
+    # Normalize to common structure
+    return {
+        "name": data.get("n") or data.get("name", ""),
+        "inbox_id": data.get("i", ""),
+        "wallet": data.get("wallet", ""),
+        "version": data.get("v") or data.get("version", ""),
+    }
+
+
+def _resolve_demo_target() -> str:
+    """Get demo bot routing target (inbox ID or wallet) from invite code."""
+    decoded = _decode_invite(DEMO_BOT_INVITE)
+    return decoded.get("inbox_id") or decoded.get("wallet", "")
 
 
 def _config_path() -> Path:
@@ -75,125 +99,28 @@ def _sync_wallet_address(xmtp_address: str):
             pass
 
 
-# ── Skill Templates ──────────────────────────────────────
-
-SKILL_TEMPLATES = {
-    "echo": {
-        "label": "Echo       — repeat back any input (simplest skill)",
-        "code": '''
-@agent.skill("echo", description="Repeat back any input",
-             input_schema={"text": "str"},
-             output_schema={"text": "str"})
-def echo(text: str) -> dict:
-    return {"text": text}
-''',
-    },
-    "summarize": {
-        "label": "Summarize  — shorten text to key points",
-        "code": '''
-@agent.skill("summarize", description="Summarize text to key points",
-             input_schema={"text": "str", "max_length": "int"},
-             output_schema={"summary": "str", "word_count": "int"})
-def summarize(text: str, max_length: int = 200) -> dict:
-    words = text.split()
-    if len(words) <= max_length // 5:
-        return {"summary": text, "word_count": len(words)}
-    shortened = " ".join(words[:max_length // 5]) + "..."
-    return {"summary": shortened, "word_count": len(shortened.split())}
-''',
-    },
-    "translate": {
-        "label": "Translate  — translate text between languages",
-        "code": '''
-@agent.skill("translate", description="Translate text between languages",
-             input_schema={"text": "str", "to_lang": "str"},
-             output_schema={"translated": "str", "from_lang": "str"})
-def translate(text: str, to_lang: str = "en") -> dict:
-    # Replace with your translation API (Google, DeepL, etc.)
-    return {"translated": f"[{to_lang}] {text}", "from_lang": "auto"}
-''',
-    },
-    "search": {
-        "label": "Search     — search for information",
-        "code": '''
-@agent.skill("search", description="Search for information on a topic",
-             input_schema={"query": "str"},
-             output_schema={"results": "list", "count": "int"})
-def search(query: str) -> dict:
-    # Replace with your search API (Google, Bing, etc.)
-    results = [f"Result 1 for: {query}", f"Result 2 for: {query}"]
-    return {"results": results, "count": len(results)}
-''',
-    },
-    "analyze": {
-        "label": "Analyze    — extract insights from data",
-        "code": '''
-@agent.skill("analyze", description="Analyze data and extract insights",
-             input_schema={"data": "str", "goal": "str"},
-             output_schema={"insights": "list", "confidence": "float"})
-def analyze(data: str, goal: str = "") -> dict:
-    topic = data or goal or "general"
-    return {
-        "insights": [
-            f"Key finding about {topic}",
-            f"Trend analysis for {topic}",
-        ],
-        "confidence": 0.85,
-    }
-''',
-    },
-}
-
+# ── Bot Generator ────────────────────────────────────────
 
 def _generate_bot(name: str, bot_path: Path):
-    """Generate a starter bot.py with user-selected skills."""
-    print("\n  ── Choose skills for your bot ──\n")
-    items = list(SKILL_TEMPLATES.items())
-    for i, (key, tmpl) in enumerate(items, 1):
-        print(f"    [{i}] {tmpl['label']}")
-    print(f"\n    [a] All of the above")
-    print(f"    [s] Skip — I'll write my own skills")
-
-    try:
-        choice = input("\n  Select skills (e.g. 1,3 or a): ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        choice = "1"  # default to echo
-
-    selected = []
-    if choice == "a":
-        selected = [key for key, _ in items]
-    elif choice == "s":
-        selected = []
-    else:
-        for part in choice.replace(" ", "").split(","):
-            try:
-                idx = int(part) - 1
-                if 0 <= idx < len(items):
-                    selected.append(items[idx][0])
-            except ValueError:
-                pass
-
-    if not selected:
-        selected = ["echo"]  # always include at least echo
-
-    # Build bot.py
-    skill_code = ""
-    for key in selected:
-        skill_code += SKILL_TEMPLATES[key]["code"]
-
-    skill_names = ", ".join(selected)
+    """Generate a starter bot.py with a simple echo skill."""
     content = f'''"""CoWorker Agent — {name}
 
-Skills: {skill_names}
+Skills: echo
 Dashboard: http://localhost:8090
 """
 from agent_coworker import Agent
 
 agent = Agent("{name}")
-{skill_code}
+
+@agent.skill("echo", description="Repeat back any input",
+             input_schema={{"text": "str"}},
+             output_schema={{"text": "str"}})
+def echo(text: str) -> dict:
+    return {{"text": text}}
+
 if __name__ == "__main__":
     print(f"Starting {{agent.name}}...")
-    print(f"  Skills: {skill_names}")
+    print(f"  Skills: echo")
     print(f"  Dashboard: http://localhost:8090")
     agent.serve()
 '''
@@ -282,8 +209,10 @@ def cmd_init(args):
 def cmd_status(args):
     """Show agent status."""
     config = _load_config()
+    wallet = config['wallet']
+    short_wallet = f"{wallet[:6]}...{wallet[-4:]}" if len(wallet) > 12 else wallet
     print(f"Name:    {config['name']}")
-    print(f"Wallet:  {config['wallet']}")
+    print(f"Wallet:  {short_wallet}")
     print(f"Created: {config.get('created_at', 'unknown')}")
 
     # Peers
@@ -314,7 +243,7 @@ def cmd_bridge(args):
 
     if args.action == "start":
         print("Starting XMTP bridge...")
-        result = start(COWORKER_DIR, env=args.env or "dev")
+        result = start(COWORKER_DIR, env=args.env or "production")
         if "error" in result:
             print(f"  ✗ {result['error']}")
             if "log" in result and result["log"].strip():
@@ -355,20 +284,38 @@ def cmd_bridge(args):
 def cmd_invite(args):
     """Generate an invite code for collaborators to connect."""
     config = _load_config()
-    invite_data = {
-        "name": config["name"],
-        "wallet": config["wallet"],
-        "v": VERSION,
-    }
+
+    # Try to get inbox ID from bridge (preferred — no wallet exposure)
+    inbox_id = ""
+    try:
+        from ._internal.bridge import check_running
+        bridge = check_running(COWORKER_DIR)
+        if bridge:
+            import urllib.request
+            port = bridge.get("port", 3500)
+            resp = urllib.request.urlopen(f"http://localhost:{port}/inbox-id", timeout=3)
+            data = json.loads(resp.read())
+            inbox_id = data.get("inboxId", "")
+    except Exception:
+        pass
+
+    if inbox_id:
+        # New format: inbox ID only, no wallet exposed
+        invite_data = {"n": config["name"], "i": inbox_id, "v": VERSION}
+        short = f"{config['name']}-{inbox_id[:8]}"
+    else:
+        # Fallback: wallet-based (bridge not running)
+        invite_data = {"name": config["name"], "wallet": config["wallet"], "v": VERSION}
+        short = f"{config['name']}-{config['wallet'][2:6]}".lower()
+        print(f"\n  [note] Bridge not running — invite uses wallet address.")
+        print(f"  Start bridge first for privacy-preserving invite: coworker bridge start\n")
+
     code = base64.b64encode(json.dumps(invite_data, separators=(",", ":")).encode()).decode()
-    short = f"{config['name']}-{config['wallet'][2:6]}".lower()
 
     print(f"\n  Agent:  {config['name']}")
-    print(f"  Wallet: {config['wallet']}")
-    print(f"\n  ── Share any of these ──\n")
-    print(f"  Short ID:     {short}")
-    print(f"  CLI command:  coworker connect {code}")
+    print(f"\n  ── Share with collaborators ──\n")
     print(f"  Invite code:  {code}")
+    print(f"  Short ID:     {short}")
     print(f"\n  Your collaborator runs:")
     print(f"    pip install agent-coworker")
     print(f"    coworker connect {code}")
@@ -376,23 +323,30 @@ def cmd_invite(args):
 
 
 def cmd_connect(args):
-    """Connect to a peer by wallet address or invite code."""
+    """Connect to a peer by invite code or wallet address."""
     target = args.target
 
-    # Try as wallet address first
+    # Route 1: Wallet address (0x...) — legacy/advanced
     if target.startswith("0x") and len(target) >= 40:
+        peer_target = target  # wallet address for routing
         peer_wallet = target
         peer_name = args.name or f"peer-{target[2:8]}"
-        peer_data = {"wallet": peer_wallet}
+        peer_inbox_id = ""
     else:
-        # Try as base64 invite code
+        # Route 2: Invite code (base64)
         try:
-            decoded = json.loads(base64.b64decode(target))
-            peer_wallet = decoded["wallet"]
-            peer_name = decoded.get("name", f"peer-{peer_wallet[2:8]}")
-            peer_data = decoded
+            decoded = _decode_invite(target)
+            peer_name = decoded.get("name") or args.name or "peer"
+            peer_inbox_id = decoded.get("inbox_id", "")
+            peer_wallet = decoded.get("wallet", "")
+            # Prefer inbox ID for routing, fall back to wallet
+            peer_target = peer_inbox_id or peer_wallet
+            if not peer_target:
+                print("  Invalid invite code: no routing info found.")
+                print("  The invite code may be from an incompatible version.")
+                sys.exit(1)
         except Exception:
-            print("Invalid target. Provide a wallet address (0x...) or invite code.")
+            print("  Invalid target. Provide an invite code or wallet address (0x...).")
             sys.exit(1)
 
     # Save peer
@@ -405,17 +359,20 @@ def cmd_connect(args):
         except (json.JSONDecodeError, IOError):
             pass
 
-    peers[peer_name] = {
-        "wallet": peer_wallet,
-        "skills": peer_data.get("skills", []),
-        "version": peer_data.get("version", ""),
+    peer_record = {
         "connected_at": datetime.now(timezone.utc).isoformat(),
     }
+    if peer_wallet:
+        peer_record["wallet"] = peer_wallet
+    if peer_inbox_id:
+        peer_record["inbox_id"] = peer_inbox_id
+
+    peers[peer_name] = peer_record
 
     with open(_peers_path(), "w") as f:
         json.dump(peers, f, indent=2)
 
-    print(f"Connected to: {peer_name} ({peer_wallet[:16]}...)")
+    print(f"Connected to: {peer_name}")
 
     # Try XMTP discover if bridge is running
     from ._internal.bridge import check_running
@@ -438,14 +395,18 @@ def cmd_connect(args):
             poll.start()
             time.sleep(1)  # Let poll thread start consuming
 
-            peer = agent.connect(peer_wallet, retries=3)
+            peer = agent.connect(peer_target, retries=3)
             agent._running = False
 
             if "error" not in peer:
                 skills = peer.get("skills", [])
                 skill_names = [s["name"] if isinstance(s, dict) else s for s in skills]
-                # Update saved peer with discovered skills
+                # Update saved peer with discovered skills + wallet from response
                 peers[peer_name]["skills"] = skills
+                # If we connected via inbox ID, save the wallet from discovery response
+                resp_wallet = peer.get("wallet", "")
+                if resp_wallet and not peers[peer_name].get("wallet"):
+                    peers[peer_name]["wallet"] = resp_wallet
                 with open(_peers_path(), "w") as f:
                     json.dump(peers, f, indent=2)
                 print(f"  ✓ Discovered {len(skills)} skills: {', '.join(skill_names)}")
@@ -454,7 +415,7 @@ def cmd_connect(args):
                 print(f"  Peer saved — skills will be discovered on next connect")
         except Exception as e:
             print(f"  ⚠ Discovery failed: {e}")
-            print(f"  Peer saved — run 'coworker connect {peer_wallet}' again to retry")
+            print(f"  Peer saved — try again later")
     else:
         print(f"  ℹ Bridge not running — start with 'coworker bridge start' to discover skills")
 
@@ -522,7 +483,7 @@ def cmd_demo(args):
 
     config = _load_config()
     print(f"  Your agent: {config['name']}")
-    print(f"  Demo bot:   {DEMO_BOT_NAME} ({DEMO_BOT_WALLET[:16]}...)")
+    print(f"  Demo bot:   {DEMO_BOT_NAME}")
     print(f"  Skills:     {', '.join(DEMO_BOT_SKILLS)}")
     print()
 
@@ -542,7 +503,7 @@ def cmd_demo(args):
         poll.start()
         time.sleep(1)
 
-        peer = agent.connect(DEMO_BOT_WALLET, retries=3)
+        peer = agent.connect(_resolve_demo_target(), retries=3)
 
         if "error" in peer:
             print(f"  ⚠ Could not reach {DEMO_BOT_NAME} — it may be offline.")
@@ -563,7 +524,7 @@ def cmd_demo(args):
             except (json.JSONDecodeError, IOError):
                 pass
         peers[DEMO_BOT_NAME] = {
-            "wallet": DEMO_BOT_WALLET,
+            "wallet": _resolve_demo_target(),
             "skills": skills,
             "connected_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -578,7 +539,9 @@ def cmd_demo(args):
     print(f"\n  [2/4] Calling {DEMO_BOT_NAME}.about('general')...")
     print(f"        (You're calling a remote skill via XMTP — E2E encrypted)")
     try:
-        result = agent.call(DEMO_BOT_WALLET, "about", {"topic": "general"}, timeout=15)
+        # First call after discover is often slow (XMTP conversation setup ~30-60s)
+        print(f"        (First call may take 30-60s for XMTP conversation setup)")
+        result = agent.call(_resolve_demo_target(), "about", {"topic": "general"}, timeout=60, retries=2)
         if "error" not in result:
             data = result.get("result", result)
             print(f"\n  icy says:")
@@ -603,9 +566,9 @@ def cmd_demo(args):
     print(f"\n  [3/4] Calling {DEMO_BOT_NAME}.translate('Hello world', to_lang='zh')...")
     print(f"        (icy's translate code is private — you only see input/output)")
     try:
-        result = agent.call(DEMO_BOT_WALLET, "translate", {
+        result = agent.call(_resolve_demo_target(), "translate", {
             "text": "Hello world", "to_lang": "zh"
-        }, timeout=15)
+        }, timeout=45, retries=2)
         if "error" not in result:
             data = result.get("result", result)
             print(f"  ✓ {json.dumps(data, ensure_ascii=False)}")
@@ -618,7 +581,7 @@ def cmd_demo(args):
     print(f"\n  [4/4] Calling {DEMO_BOT_NAME}.search('coworker protocol')...")
     print(f"        (This skill requires KNOWN trust — you were auto-granted)")
     try:
-        result = agent.call(DEMO_BOT_WALLET, "search", {"query": "coworker protocol"}, timeout=15)
+        result = agent.call(_resolve_demo_target(), "search", {"query": "coworker protocol"}, timeout=45, retries=2)
         if "error" not in result:
             data = result.get("result", result)
             results_list = data.get("results", [])
@@ -646,9 +609,177 @@ def cmd_demo(args):
     print()
 
 
+def cmd_skills(args):
+    """Manage skill visibility — control which skills peers can discover."""
+    from agent_coworker._internal.skill_visibility import (
+        SkillVisibilityConfig, STATE_EXPOSED, STATE_HIDDEN,
+    )
+
+    config = SkillVisibilityConfig(str(COWORKER_DIR))
+    config.load()
+    action = getattr(args, "skills_action", None)
+
+    if action == "list" or action is None:
+        skills = config.get_skills()
+        if not skills:
+            print("  No skill visibility config found.")
+            print("  Skills are configured when you first run agent.serve().")
+            print("  Or use: coworker skills configure --expose skill1,skill2")
+            return
+        print()
+        for name, cfg in sorted(skills.items()):
+            state = cfg.get("state", "hidden")
+            marker = "✓" if state == "exposed" else "✗"
+            pending = " (new, pending review)" if cfg.get("pending_review") else ""
+            tier = ""
+            label = "Exposed" if state == "exposed" else "Hidden"
+            print(f"  {marker} {name:<20s} {label}{pending}")
+        total = len(skills)
+        exposed = sum(1 for c in skills.values() if c.get("state") == "exposed")
+        print(f"\n  {exposed}/{total} skills exposed to peers.")
+
+    elif action == "configure":
+        skills = config.get_skills()
+        if not skills:
+            print("  No skills registered yet. Run your bot first, then configure.")
+            return
+
+        # Handle non-interactive flags
+        if args.all_expose:
+            for name in skills:
+                config.set_state(name, STATE_EXPOSED)
+            config.save()
+            print(f"  ✓ All {len(skills)} skills exposed.")
+            return
+        if args.all_hide:
+            for name in skills:
+                config.set_state(name, STATE_HIDDEN)
+            config.save()
+            print(f"  ✓ All {len(skills)} skills hidden.")
+            return
+        if args.expose:
+            for name in args.expose.split(","):
+                name = name.strip()
+                if name in skills:
+                    config.set_state(name, STATE_EXPOSED)
+                else:
+                    print(f"  ⚠ Unknown skill: {name}")
+            config.save()
+            print(f"  ✓ Updated.")
+            return
+        if args.hide:
+            for name in args.hide.split(","):
+                name = name.strip()
+                if name in skills:
+                    config.set_state(name, STATE_HIDDEN)
+                else:
+                    print(f"  ⚠ Unknown skill: {name}")
+            config.save()
+            print(f"  ✓ Updated.")
+            return
+
+        # Interactive mode
+        items = sorted(skills.items())
+        print(f"\n  ── Skill Visibility Configure {'─' * 28}")
+        print(f"  Toggle skills by entering their number. Type 'done' to save.\n")
+        while True:
+            for i, (name, cfg) in enumerate(items, 1):
+                state = cfg.get("state", "hidden")
+                marker = "✓" if state == "exposed" else "✗"
+                pending = " (pending review)" if cfg.get("pending_review") else ""
+                print(f"    [{i}] {marker} {name}{pending}")
+            print()
+            try:
+                choice = input("  Toggle (number) or 'done': ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Cancelled.")
+                return
+            if choice in ("done", "d", ""):
+                break
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(items):
+                    name = items[idx][0]
+                    current = skills[name].get("state", "hidden")
+                    new_state = STATE_HIDDEN if current == "exposed" else STATE_EXPOSED
+                    config.set_state(name, new_state)
+                    skills[name]["state"] = new_state
+                    print(f"  → {name}: {'Exposed' if new_state == 'exposed' else 'Hidden'}\n")
+                else:
+                    print(f"  Invalid number.\n")
+            except ValueError:
+                print(f"  Enter a number or 'done'.\n")
+
+        if config.save():
+            exposed = sum(1 for c in skills.values() if c.get("state") == "exposed")
+            print(f"\n  ✓ Saved. {exposed}/{len(skills)} skills exposed.")
+        else:
+            print(f"\n  ⚠ Failed to save config.")
+
+    elif action == "expose":
+        name = args.skill_name
+        if not config.get_skills().get(name):
+            print(f"  ⚠ Unknown skill: {name}")
+            return
+        config.set_state(name, STATE_EXPOSED)
+        if config.save():
+            print(f"  ✓ {name}: Exposed")
+        else:
+            print(f"  ⚠ Failed to save.")
+
+    elif action == "hide":
+        name = args.skill_name
+        if not config.get_skills().get(name):
+            print(f"  ⚠ Unknown skill: {name}")
+            return
+        config.set_state(name, STATE_HIDDEN)
+        if config.save():
+            print(f"  ✓ {name}: Hidden")
+        else:
+            print(f"  ⚠ Failed to save.")
+
+    elif action == "preview":
+        tier_map = {"untrusted": 0, "known": 1, "internal": 2, "privileged": 3}
+        tier_str = args.peer_tier.lower()
+        peer_tier = tier_map.get(tier_str)
+        if peer_tier is None:
+            try:
+                peer_tier = int(tier_str)
+            except ValueError:
+                print(f"  ⚠ Invalid tier: {args.peer_tier}")
+                print(f"  Valid: untrusted/known/internal/privileged or 0-3")
+                return
+
+        skills_cfg = config.get_skills()
+        exposed = config.get_exposed_set()
+        # Simulate what a peer at this tier would see
+        visible = []
+        for name in sorted(exposed):
+            cfg = skills_cfg.get(name, {})
+            # We don't have skill_def here, so show all exposed skills
+            # and note the min_trust_tier info if available
+            visible.append(name)
+
+        tier_name = {0: "UNTRUSTED", 1: "KNOWN", 2: "INTERNAL", 3: "PRIVILEGED"}.get(peer_tier, str(peer_tier))
+        print(f"\n  Peer tier: {tier_name}\n")
+        if visible:
+            print(f"  Visible skills:")
+            for name in visible:
+                print(f"    - {name}")
+        else:
+            print(f"  No skills visible at this tier.")
+        print(f"\n  Note: This preview shows skills from persistent config.")
+        print(f"  Runtime overrides (serve(expose_skills=...)) are not reflected.")
+
+    elif action == "reset":
+        config.reset()
+        print(f"  ✓ Skill visibility config removed.")
+        print(f"  Next serve() will run the first-time guide.")
+
+
 def cmd_version(args):
     """Print version."""
-    print(f"coworker-protocol {VERSION}")
+    print(f"agent-coworker {VERSION}")
 
 
 # ── Main ──────────────────────────────────────────────────
@@ -656,7 +787,7 @@ def cmd_version(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="coworker",
-        description="coworker-protocol — peer-to-peer AI agent collaboration over XMTP",
+        description="agent-coworker — peer-to-peer AI agent collaboration over XMTP",
         epilog="""examples:
   coworker init --name my-bot        Create agent identity + install XMTP bridge
   coworker bridge start              Start XMTP networking (E2E encrypted)
@@ -719,8 +850,8 @@ command for manual control or troubleshooting.""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_bridge.add_argument("action", choices=["start", "stop", "status", "setup"],
                           help="Bridge action")
-    p_bridge.add_argument("--env", default="dev", choices=["dev", "production"],
-                          help="XMTP environment (default: dev)")
+    p_bridge.add_argument("--env", default="production", choices=["dev", "production"],
+                          help="XMTP environment (default: production)")
 
     # invite
     sub.add_parser("invite",
@@ -778,6 +909,47 @@ examples:
     p_trust_rm = trust_sub.add_parser("remove", help="Remove trust override")
     p_trust_rm.add_argument("wallet", help="Peer wallet address (0x...)")
 
+    # skills
+    p_skills = sub.add_parser("skills",
+        help="Manage skill visibility (control what peers can discover)",
+        description="""Control which of your agent's skills are visible to peers.
+
+Skills registered via @agent.skill() are managed through a visibility policy.
+By default, all skills are hidden until you review them on first serve().
+
+commands:
+  list          Show current skill visibility (default)
+  configure     Interactive configuration
+  expose NAME   Expose a specific skill
+  hide NAME     Hide a specific skill
+  preview       Preview what a peer would see
+  reset         Remove visibility config
+
+examples:
+  coworker skills                           List all skills and visibility
+  coworker skills configure                 Interactive toggle
+  coworker skills configure --all-expose    Expose everything
+  coworker skills expose search             Expose 'search' skill
+  coworker skills hide admin                Hide 'admin' skill
+  coworker skills preview --peer-tier known Preview KNOWN peer's view
+  coworker skills reset                     Reset (re-run first-time guide)""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    skills_sub = p_skills.add_subparsers(dest="skills_action")
+    skills_sub.add_parser("list", help="List skills and their visibility state")
+    p_skills_cfg = skills_sub.add_parser("configure", help="Configure skill visibility")
+    p_skills_cfg.add_argument("--expose", default=None, help="Comma-separated skills to expose")
+    p_skills_cfg.add_argument("--hide", default=None, help="Comma-separated skills to hide")
+    p_skills_cfg.add_argument("--all-expose", action="store_true", help="Expose all skills")
+    p_skills_cfg.add_argument("--all-hide", action="store_true", help="Hide all skills")
+    p_skills_expose = skills_sub.add_parser("expose", help="Expose a specific skill")
+    p_skills_expose.add_argument("skill_name", help="Skill name to expose")
+    p_skills_hide = skills_sub.add_parser("hide", help="Hide a specific skill")
+    p_skills_hide.add_argument("skill_name", help="Skill name to hide")
+    p_skills_preview = skills_sub.add_parser("preview", help="Preview peer-visible skills")
+    p_skills_preview.add_argument("--peer-tier", required=True,
+                                   help="Peer trust tier: untrusted/known/internal/privileged or 0-3")
+    skills_sub.add_parser("reset", help="Reset visibility config")
+
     # demo
     sub.add_parser("demo",
         help="Connect to the demo bot and test skills",
@@ -809,6 +981,7 @@ Requires: coworker init + coworker bridge start""",
         "invite": cmd_invite,
         "connect": cmd_connect,
         "trust": cmd_trust,
+        "skills": cmd_skills,
         "demo": cmd_demo,
         "version": cmd_version,
     }

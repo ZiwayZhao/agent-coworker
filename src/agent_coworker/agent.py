@@ -53,9 +53,16 @@ class Group:
             "sender_wallet": self._agent.wallet,
         })
 
-    def broadcast_skills(self) -> dict:
-        """Broadcast this agent's skill manifest to the group."""
-        skills = self._agent.executor.list_skills()
+    def broadcast_skills(self, min_peer_tier: int = 1) -> dict:
+        """Broadcast this agent's skill manifest to the group.
+
+        Respects both visibility config and trust tier filtering.
+        Since group broadcast goes to all members, we filter by the
+        minimum expected peer tier (default KNOWN=1) to avoid leaking
+        higher-tier skills to lower-tier group members.
+        """
+        skills = self._agent.executor.list_skills_for_tier(
+            min_peer_tier, exposed_set=self._agent._exposed_set)
         return self._agent.client.group_send(self.group_id, "group_capabilities", {
             "name": self._agent.name,
             "wallet": self._agent.wallet,
@@ -210,6 +217,19 @@ class Agent:
         self._group_messages: deque = deque(maxlen=2000)  # all group messages, ordered by arrival
         self._client_msg_ids: set = set()  # (group_id, client_message_id) tuples for send idempotency
 
+        # DM conversation stores
+        import threading as _th
+        self._dm_lock = _th.Lock()
+        self._dm_messages: deque = deque(maxlen=5000)       # all DM messages, ordered
+        self._dm_conversations: dict = {}                    # conv_id → summary
+        self._dm_corr_index: dict = {}                       # correlation_id → context
+        self._dm_msg_ids: set = set()                        # dedup set
+
+        # Skill visibility
+        self._exposed_set: set | None = None  # None = no filtering (all exposed)
+        self._visibility_config = None
+        self._expose_skills_override: list | str | None = None  # runtime override from serve()
+
     @property
     def executor(self):
         if self._executor is None:
@@ -315,6 +335,180 @@ class Agent:
     def _count_message(self, msg_type: str):
         self._message_counts[msg_type] = self._message_counts.get(msg_type, 0) + 1
 
+    # ── DM Conversation Storage ────────────────────────────
+
+    def _dm_conv_id(self, peer_wallet: str) -> str:
+        return f"dm:{peer_wallet.lower()}"
+
+    def _store_dm_message(self, peer_wallet: str, peer_name: str,
+                          direction: str, msg_type: str,
+                          content: str, payload: dict = None,
+                          correlation_id: str = "",
+                          phase: str = "misc", skill: str = "",
+                          collab_id: str = "", step_index: int = -1,
+                          delivery_status: str = "sent") -> dict:
+        """Store a DM message and update conversation summary.
+
+        Args:
+            direction: "outbound" or "inbound"
+            phase: "discover" / "trust" / "plan" / "execute" / "report" / "misc"
+        """
+        conv_id = self._dm_conv_id(peer_wallet)
+        msg_id = _msg_id()
+
+        # Dedup
+        dedup_key = f"{correlation_id}:{msg_type}:{direction}"
+        with self._dm_lock:
+            if dedup_key in self._dm_msg_ids:
+                # Return existing message
+                for m in reversed(self._dm_messages):
+                    if m.get("_dedup") == dedup_key:
+                        return m
+                return {}
+            self._dm_msg_ids.add(dedup_key)
+            # Cap dedup set
+            if len(self._dm_msg_ids) > 10000:
+                # Just clear old half
+                self._dm_msg_ids = set(list(self._dm_msg_ids)[-5000:])
+
+            if direction == "outbound":
+                sender_w, sender_n = self.wallet, self.name
+                recip_w, recip_n = peer_wallet, peer_name
+            else:
+                sender_w, sender_n = peer_wallet, peer_name
+                recip_w, recip_n = self.wallet, self.name
+
+            msg = {
+                "id": msg_id,
+                "_dedup": dedup_key,
+                "conversation_id": conv_id,
+                "conversation_kind": "dm",
+                "peer_wallet": peer_wallet,
+                "peer_name": peer_name,
+                "direction": direction,
+                "sender_wallet": sender_w,
+                "sender_name": sender_n,
+                "recipient_wallet": recip_w,
+                "recipient_name": recip_n,
+                "msg_type": msg_type,
+                "phase": phase,
+                "correlation_id": correlation_id,
+                "collab_id": collab_id,
+                "step_index": step_index,
+                "skill": skill,
+                "content": content,
+                "content_type": "application/json",
+                "payload": payload or {},
+                "payload_preview": content[:120] if content else "",
+                "created_at": _now_iso(),
+                "server_received_at": _now_iso(),
+                "delivery_status": delivery_status,
+            }
+            self._dm_messages.append(msg)
+
+            # Update conversation summary
+            now = _now_iso()
+            if conv_id not in self._dm_conversations:
+                self._dm_conversations[conv_id] = {
+                    "id": conv_id,
+                    "kind": "dm",
+                    "peer_wallet": peer_wallet,
+                    "peer_name": peer_name,
+                    "trust_tier": _trust_tier_label(
+                        self.trust_manager.get_trust_tier(peer_wallet)),
+                    "created_at": now,
+                    "updated_at": now,
+                    "last_message_id": msg_id,
+                    "last_message_at": now,
+                    "last_message": {"content": content[:80], "msg_type": msg_type},
+                    "unread_count": 0,
+                    "collab_active": bool(collab_id),
+                    "message_count": 1,
+                }
+            else:
+                conv = self._dm_conversations[conv_id]
+                conv["updated_at"] = now
+                conv["last_message_id"] = msg_id
+                conv["last_message_at"] = now
+                conv["last_message"] = {"content": content[:80], "msg_type": msg_type}
+                conv["message_count"] = conv.get("message_count", 0) + 1
+                conv["trust_tier"] = _trust_tier_label(
+                    self.trust_manager.get_trust_tier(peer_wallet))
+                if collab_id:
+                    conv["collab_active"] = True
+
+        return msg
+
+    def _track_corr(self, correlation_id: str, peer_wallet: str, peer_name: str,
+                    phase: str = "misc", collab_id: str = "",
+                    step_index: int = -1, skill: str = "",
+                    request_type: str = ""):
+        """Track a correlation_id so we can match inbound responses."""
+        with self._dm_lock:
+            self._dm_corr_index[correlation_id] = {
+                "conversation_id": self._dm_conv_id(peer_wallet),
+                "peer_wallet": peer_wallet,
+                "peer_name": peer_name,
+                "phase": phase,
+                "collab_id": collab_id,
+                "step_index": step_index,
+                "skill": skill,
+                "request_type": request_type,
+            }
+
+    def _record_tracked_response(self, msg: dict) -> bool:
+        """If an inbound response matches a tracked correlation_id, store it.
+
+        Returns True if the message was recorded.
+        """
+        corr_id = msg.get("correlation_id", "")
+        if not corr_id:
+            return False
+        with self._dm_lock:
+            ctx = self._dm_corr_index.get(corr_id)
+        if not ctx:
+            return False
+
+        msg_type = msg.get("type", "")
+        payload = msg.get("payload", {})
+
+        # Build human-readable content
+        if msg_type == "capabilities":
+            skills = payload.get("skills", [])
+            names = [s["name"] if isinstance(s, dict) else s for s in skills]
+            content = f"Skills: {', '.join(names)}" if names else "No skills"
+        elif msg_type == "task_response":
+            result = payload.get("result", {})
+            content = f"Result: {json.dumps(result, ensure_ascii=False)[:200]}"
+        elif msg_type == "task_error":
+            content = f"Error: {payload.get('error', '?')}"
+        elif msg_type == "plan_accept":
+            content = "Plan accepted"
+        elif msg_type == "trust_grant":
+            content = f"Trust granted: tier {payload.get('tier', '?')}"
+        elif msg_type == "trust_deny":
+            content = f"Trust denied: {payload.get('reason', '?')}"
+        else:
+            content = f"{msg_type}: {json.dumps(payload, ensure_ascii=False)[:150]}"
+
+        self._store_dm_message(
+            peer_wallet=ctx["peer_wallet"],
+            peer_name=ctx["peer_name"],
+            direction="inbound",
+            msg_type=msg_type,
+            content=content,
+            payload=payload,
+            correlation_id=corr_id,
+            phase=ctx.get("phase", "misc"),
+            skill=ctx.get("skill", ""),
+            collab_id=ctx.get("collab_id", ""),
+            step_index=ctx.get("step_index", -1),
+            delivery_status="received",
+        )
+        return True
+
+    # ── Group Message Storage ────────────────────────────
+
     def _store_group_message(self, group_id: str, sender_wallet: str,
                               sender_name: str, content: str,
                               content_type: str = "text/plain",
@@ -376,6 +570,8 @@ class Agent:
             # Already have a response for this correlation — skip duplicate
             return
         if msg_type in RESPONSE_MSG_TYPES:
+            # Record tracked response into DM conversation before delivering
+            self._record_tracked_response(msg)
             self._response_box[correlation_id] = msg
             print(f"  ← {msg_type} (corr: {correlation_id[:8] if correlation_id else '?'})")
             return
@@ -407,11 +603,25 @@ class Agent:
         if msg_type == "discover":
             # Return only skills visible at sender's trust tier
             peer_tier = self.trust_manager.get_trust_tier(sender_wallet)
-            visible_skills = self.executor.list_skills_for_tier(peer_tier)
+            visible_skills = self.executor.list_skills_for_tier(peer_tier, exposed_set=self._exposed_set)
             self.client.send(sender_wallet, "capabilities", {
                 "name": self.name,
                 "skills": visible_skills,
             }, correlation_id=correlation_id)
+            # Record inbound discover + outbound capabilities in DM
+            skill_names_str = ", ".join(s["name"] if isinstance(s, dict) else s for s in visible_skills)
+            self._store_dm_message(
+                peer_wallet=sender_wallet, peer_name=sender_name,
+                direction="inbound", msg_type="discover",
+                content=f"Skill discovery request",
+                correlation_id=correlation_id, phase="discover",
+                delivery_status="received")
+            self._store_dm_message(
+                peer_wallet=sender_wallet, peer_name=sender_name,
+                direction="outbound", msg_type="capabilities",
+                content=f"Skills: {skill_names_str}" if skill_names_str else "No skills",
+                payload={"skills": [s["name"] if isinstance(s, dict) else s for s in visible_skills]},
+                correlation_id=correlation_id, phase="discover")
             self._log_activity("message", f"Discover from {sender_name}",
                              f"Sent {len(visible_skills)} skills (tier {peer_tier})",
                              peer=sender_name)
@@ -439,6 +649,18 @@ class Agent:
             input_data = payload.get("input", {})
             task_id = _uid()
 
+            # Check visibility: hidden skills return unknown_skill (no existence leak)
+            if self._exposed_set is not None and skill_name not in self._exposed_set:
+                self.client.send(sender_wallet, "task_error", {
+                    "success": False,
+                    "error": f"Unknown skill: {skill_name}",
+                }, correlation_id=correlation_id)
+                import logging
+                logging.getLogger("coworker.visibility").info(
+                    "skill_hidden name=%s caller=%s", skill_name, sender_wallet[:12])
+                print(f"  ✗ task_request for hidden skill '{skill_name}' → unknown_skill")
+                return
+
             # Check skill-level trust: peer must have sufficient tier for this skill
             skill_def = self.executor.get_skill(skill_name)
             if skill_def:
@@ -446,13 +668,25 @@ class Agent:
                 if peer_tier < (skill_def.min_trust_tier if skill_def.min_trust_tier is not None else 1):
                     self.client.send(sender_wallet, "task_error", {
                         "success": False,
-                        "error": f"Skill '{skill_name}' requires trust tier >= {skill_def.min_trust_tier}, "
-                                 f"but you have tier {peer_tier}",
+                        "error": f"Unknown skill: {skill_name}",
                     }, correlation_id=correlation_id)
+                    import logging
+                    logging.getLogger("coworker.visibility").info(
+                        "skill_tier_blocked name=%s peer_tier=%s required=%s",
+                        skill_name, peer_tier, skill_def.min_trust_tier)
                     print(f"  ✗ Blocked task_request for {skill_name} (tier {peer_tier} < {skill_def.min_trust_tier})")
                     return
 
             print(f"  ← task_request: {skill_name} from {sender_wallet[:12]}...")
+            # Record inbound task_request
+            self._store_dm_message(
+                peer_wallet=sender_wallet, peer_name=sender_name,
+                direction="inbound", msg_type="task_request",
+                content=f"Call {skill_name}({json.dumps(input_data, ensure_ascii=False)[:100]})",
+                payload={"skill": skill_name, "input": input_data},
+                correlation_id=correlation_id, phase="execute",
+                skill=skill_name, delivery_status="received")
+
             start_t = time.time()
             result = self.executor.execute(skill_name, input_data)
             duration = (time.time() - start_t) * 1000
@@ -461,6 +695,15 @@ class Agent:
             resp_type = "task_response" if success else "task_error"
             self.client.send(sender_wallet, resp_type, result,
                            correlation_id=correlation_id)
+            # Record outbound task_response
+            result_preview = json.dumps(result.get("result", {}), ensure_ascii=False)[:150]
+            self._store_dm_message(
+                peer_wallet=sender_wallet, peer_name=sender_name,
+                direction="outbound", msg_type=resp_type,
+                content=f"{'Result' if success else 'Error'}: {result_preview}",
+                payload=result,
+                correlation_id=correlation_id, phase="execute",
+                skill=skill_name)
 
             # Track
             self._log_task(task_id, skill_name, sender_name, sender_wallet,
@@ -524,18 +767,21 @@ class Agent:
             print(f"  → plan_accept ✓")
 
         elif msg_type == "skill_card_query":
-            # Return detailed skill info, filtered by trust tier
+            # Return detailed skill info, filtered by visibility + trust tier
             payload = msg.get("payload", {})
             skill_name = payload.get("skill", "")
+            # Unified check: visibility + trust — all failures return same error
+            skill_visible = (self._exposed_set is None or skill_name in self._exposed_set)
             peer_tier = self.trust_manager.get_trust_tier(sender_wallet)
             skill_def = self.executor.get_skill(skill_name)
-            if skill_def and peer_tier >= (skill_def.min_trust_tier or 1):
+            if skill_visible and skill_def and peer_tier >= (skill_def.min_trust_tier or 1):
                 self.client.send(sender_wallet, "skill_card", skill_def.to_dict(),
                                correlation_id=correlation_id)
             else:
+                # Uniform error — no existence/visibility leak
                 self.client.send(sender_wallet, "error", {
                     "code": "SKILL_NOT_FOUND",
-                    "message": f"Skill '{skill_name}' not found or not visible",
+                    "message": f"Unknown skill: {skill_name}",
                 }, correlation_id=correlation_id)
 
         elif msg_type == "group_discover":
@@ -543,7 +789,7 @@ class Agent:
             payload = msg.get("payload", {})
             requester_wallet = payload.get("wallet", sender_wallet)
             peer_tier = self.trust_manager.get_trust_tier(requester_wallet)
-            visible_skills = self.executor.list_skills_for_tier(peer_tier)
+            visible_skills = self.executor.list_skills_for_tier(peer_tier, exposed_set=self._exposed_set)
             # Reply via group (so everyone sees)
             group_id = msg.get("_group_id", "")
             if group_id:
@@ -573,17 +819,35 @@ class Agent:
             requester_wallet = payload.get("requester_wallet", sender_wallet)
             task_id = _uid()
 
-            # Trust check
+            # Unified authorization: visibility + trust tier
+            # All rejection reasons return the same "Unknown skill" to prevent enumeration
+            err_payload = {"success": False, "error": f"Unknown skill: {skill_name}"}
+
+            # Layer 1: visibility check
+            if self._exposed_set is not None and skill_name not in self._exposed_set:
+                import logging
+                logging.getLogger("coworker.visibility").info(
+                    "skill_hidden name=%s caller=%s (group)", skill_name, requester_wallet[:12])
+                group_id = msg.get("_group_id", "")
+                if group_id:
+                    self.client.group_send(group_id, "group_task_error", err_payload,
+                                          correlation_id=correlation_id)
+                else:
+                    self.client.send(sender_wallet, "group_task_error", err_payload,
+                                    correlation_id=correlation_id)
+                return
+
+            # Layer 2: trust tier check
             peer_tier = self.trust_manager.get_trust_tier(requester_wallet)
             skill_def = self.executor.get_skill(skill_name)
             if skill_def:
                 min_tier = skill_def.min_trust_tier if skill_def.min_trust_tier is not None else 1
                 if peer_tier < min_tier:
+                    import logging
+                    logging.getLogger("coworker.visibility").info(
+                        "skill_tier_blocked name=%s peer_tier=%s required=%s (group)",
+                        skill_name, peer_tier, min_tier)
                     group_id = msg.get("_group_id", "")
-                    err_payload = {
-                        "success": False,
-                        "error": f"Skill '{skill_name}' requires trust tier >= {min_tier}",
-                    }
                     if group_id:
                         self.client.group_send(group_id, "group_task_error", err_payload,
                                               correlation_id=correlation_id)
@@ -732,6 +996,15 @@ class Agent:
             self.client.send(wallet_address, "discover", {
                 "name": self.name, "wallet": self.wallet,
             }, correlation_id=corr_id)
+            # Record outbound discover
+            _peer_name_tmp = f"peer-{wallet_address[2:8]}"
+            self._store_dm_message(
+                peer_wallet=wallet_address, peer_name=_peer_name_tmp,
+                direction="outbound", msg_type="discover",
+                content=f"Discovering skills...",
+                correlation_id=corr_id, phase="discover")
+            self._track_corr(corr_id, wallet_address, _peer_name_tmp,
+                           phase="discover", request_type="discover")
 
             wait_secs = 30 if attempt == 1 else 25  # first DM needs longer
             for _ in range(wait_secs):
@@ -752,9 +1025,10 @@ class Agent:
 
                     skill_names = [s["name"] if isinstance(s, dict) else s for s in skills]
 
-                    # Auto-trust handshake: if peer returned 0 skills, we're likely
-                    # UNTRUSTED. Send a trust_request, wait for grant, then re-discover.
-                    if len(skills) == 0:
+                    # Auto-trust handshake: always request KNOWN tier so we can
+                    # call skills that require task_request (tier >= 1).
+                    # Even if we got some tier-0 skills, task_request itself needs KNOWN.
+                    if True:  # always request trust upgrade
                         print(f"  ℹ Peer returned 0 skills (UNTRUSTED) — requesting trust...")
                         trust_corr = _uid()
                         self.client.send(wallet_address, "trust_request", {
@@ -794,6 +1068,14 @@ class Agent:
                     self._log_activity("session", f"Connected to {peer_name}",
                                      f"Discovered {len(skills)} skills: {', '.join(skill_names)}",
                                      peer=peer_name, status="connected")
+                    # Pre-warm return DM conversation in background
+                    # This reduces first task_request latency significantly
+                    def _prewarm():
+                        try:
+                            self.client.prewarm(wallet_address)
+                        except Exception:
+                            pass
+                    threading.Thread(target=_prewarm, daemon=True).start()
                     return peers[peer_name]
 
         print(f"  ✗ No response from {wallet_address[:12]}... (timeout after {retries} attempts)")
@@ -817,6 +1099,21 @@ class Agent:
             self.client.send(wallet_address, "task_request", {
                 "skill": skill_name, "input": input_data,
             }, correlation_id=corr_id)
+            # Record outbound task_request
+            _peer = wallet_address[:12] + "..."
+            _collab = getattr(self, '_current_collab_id', "")
+            _step = getattr(self, '_current_step_index', -1)
+            self._store_dm_message(
+                peer_wallet=wallet_address, peer_name=_peer,
+                direction="outbound", msg_type="task_request",
+                content=f"Call {skill_name}({json.dumps(input_data, ensure_ascii=False)[:100]})",
+                payload={"skill": skill_name, "input": input_data},
+                correlation_id=corr_id, phase="execute",
+                skill=skill_name, collab_id=_collab, step_index=_step)
+            self._track_corr(corr_id, wallet_address, _peer,
+                           phase="execute", skill=skill_name,
+                           collab_id=_collab, step_index=_step,
+                           request_type="task_request")
 
             start = time.time()
             while time.time() - start < timeout:
@@ -852,6 +1149,11 @@ class Agent:
 
     def collaborate(self, wallet_address: str, goal: str, timeout: float = 120.0) -> dict:
         """Auto-collaborate with a remote agent toward a shared goal."""
+
+        # Generate collab_id for DM thread tracking
+        collab_id = _uid()
+        self._current_collab_id = collab_id
+        self._current_step_index = -1
 
         # Set collab status for UI
         self._collab_status = {
@@ -946,7 +1248,11 @@ class Agent:
                     "topic": goal_text}
 
         # Build lookup from skill name → full skill info dict
-        my_skill_infos = {s["name"]: s for s in self.executor.list_skills()}
+        # Only use exposed skills in collaboration
+        all_skills = self.executor.list_skills()
+        if self._exposed_set is not None:
+            all_skills = [s for s in all_skills if s["name"] in self._exposed_set]
+        my_skill_infos = {s["name"]: s for s in all_skills}
         peer_skill_infos = {}
         for s in peer_skills:
             if isinstance(s, dict):
@@ -1015,6 +1321,17 @@ class Agent:
             "goal": goal, "steps": steps,
             "initiator": self.name, "initiator_wallet": self.wallet,
         }, correlation_id=plan_corr)
+        # Record plan proposal DM
+        self._store_dm_message(
+            peer_wallet=wallet_address, peer_name=peer_name_early,
+            direction="outbound", msg_type="plan_propose",
+            content=f"Plan: {len(steps)} steps — {step_summary}",
+            payload={"goal": goal, "steps": [s["skill"] for s in steps]},
+            correlation_id=plan_corr, phase="plan",
+            collab_id=collab_id)
+        self._track_corr(plan_corr, wallet_address, peer_name_early,
+                        phase="plan", collab_id=collab_id,
+                        request_type="plan_propose")
 
         accepted = False
         for _ in range(20):
@@ -1055,6 +1372,7 @@ class Agent:
             agent_name = step["agent"]
             is_local = step["agent_wallet"] == self.wallet
             collab_steps_ui[i]["status"] = "in_progress"
+            self._current_step_index = i  # for call() DM tracking
 
             print(f"  [{i+1}/{len(steps)}] {sk} ({agent_name}) ...", end=" ", flush=True)
 
@@ -1166,6 +1484,21 @@ class Agent:
                             f"[Trust] Auto-downgraded: {peer_name_early} "
                             f"{TrustTier(prev).name}→{TrustTier(new).name} (OKR completed)")
 
+        # Record collaboration complete in DM
+        self._store_dm_message(
+            peer_wallet=wallet_address, peer_name=peer_name_early,
+            direction="outbound", msg_type="collab_complete",
+            content=f"Collaboration {'completed' if all_ok else 'partial'}: {n_ok}/{len(results)} steps",
+            phase="report", collab_id=collab_id)
+        # Cleanup
+        self._current_collab_id = ""
+        self._current_step_index = -1
+        # Mark conversation collab as inactive
+        conv_id = self._dm_conv_id(wallet_address)
+        with self._dm_lock:
+            if conv_id in self._dm_conversations:
+                self._dm_conversations[conv_id]["collab_active"] = False
+
         return {
             "goal": goal, "success": all_ok,
             "steps": steps, "results": results,
@@ -1242,21 +1575,114 @@ class Agent:
             tasks = [t for t in tasks if t.get("skill") == skill]
         return tasks[:limit]
 
+    # ── Skill Visibility ─────────────────────────────────────
+
+    def _init_skill_visibility(self, expose_skills_param):
+        """Initialize skill visibility: first-run guide, config load, or override."""
+        from ._internal.skill_visibility import (
+            SkillVisibilityConfig, compute_effective_exposed,
+            run_first_time_guide, print_new_skill_reminder,
+        )
+
+        registered = self.executor.skill_names
+        config = SkillVisibilityConfig(self.data_dir, agent_id=self.name)
+        self._visibility_config = config
+
+        # Runtime override (code parameter) — takes full precedence, API POST cannot overwrite
+        self._expose_skills_override = expose_skills_param
+        if expose_skills_param is not None:
+            if expose_skills_param == "all":
+                self._exposed_set = set(registered)
+                print(f"  Skills: all {len(registered)} exposed (runtime override)")
+            else:
+                self._exposed_set = compute_effective_exposed(
+                    registered, config, expose_skills_override=list(expose_skills_param))
+                print(f"  Skills: {len(self._exposed_set)}/{len(registered)} exposed (runtime override)")
+            return
+
+        # Load persistent config
+        config.load()
+        merge = config.merge_discovered_skills(registered)
+
+        if not merge["has_config"]:
+            # First run — interactive guide
+            is_tty = hasattr(sys.stdin, "isatty") and sys.stdin.isatty()
+            if is_tty and registered:
+                self._exposed_set = run_first_time_guide(registered, config)
+            elif registered:
+                # Non-TTY: safe default (all hidden)
+                print("  [warning] Non-interactive terminal detected.")
+                print("  [warning] All skills remain hidden until configured.")
+                print("  [warning] Run `coworker skills configure` in a TTY to review.")
+                config.set_all_hidden(registered)
+                if not config.save():
+                    print("  [warning] Could not persist config. Hidden for this session only.")
+                self._exposed_set = set()
+            else:
+                self._exposed_set = set()
+        else:
+            # Existing config — load and check for new skills
+            if merge["new_skills"]:
+                print_new_skill_reminder(merge["new_skills"])
+                config.save()  # persist new pending_review entries
+
+            self._exposed_set = compute_effective_exposed(registered, config)
+            exposed_count = len(self._exposed_set)
+            total = len(registered)
+            if exposed_count == total:
+                print(f"  Skills: all {total} exposed")
+            else:
+                hidden = total - exposed_count
+                print(f"  Skills: {exposed_count}/{total} exposed, {hidden} hidden")
+
+    def _update_visibility(self, skill_name: str, state: str) -> bool:
+        """Update a skill's visibility at runtime. Returns True on success.
+
+        If serve(expose_skills=...) runtime override is active, config is
+        persisted for future runs but does NOT change the current exposed set.
+        """
+        if self._visibility_config is None:
+            return False
+        # Validate skill exists
+        if skill_name not in self.executor.skill_names:
+            return False
+        self._visibility_config.set_state(skill_name, state)
+        if not self._visibility_config.save():
+            return False
+        # Hot-update exposed set only if no runtime override
+        if self._expose_skills_override is None:
+            registered = self.executor.skill_names
+            from ._internal.skill_visibility import compute_effective_exposed
+            self._exposed_set = compute_effective_exposed(
+                registered, self._visibility_config)
+        return True
+
     # ── Serve ────────────────────────────────────────────────
 
-    def serve(self, monitor_port: int = 8090):
+    def serve(self, monitor_port: int = 8090, expose_skills: list | str | None = None):
         """Start the agent: XMTP listener + local HTTP dashboard.
 
         This is the main entry point. It:
-        1. Starts (or connects to) the XMTP bridge
-        2. Begins polling for incoming messages
-        3. Starts a local HTTP server with full API + React frontend
-        4. Blocks until Ctrl+C
+        1. Runs skill visibility check (first-run guide or config load)
+        2. Starts (or connects to) the XMTP bridge
+        3. Begins polling for incoming messages
+        4. Starts a local HTTP server with full API + React frontend
+        5. Blocks until Ctrl+C
+
+        Args:
+            monitor_port: Port for local HTTP dashboard.
+            expose_skills: Override which skills are exposed to peers.
+                - None: use persistent config (or first-run guide)
+                - "all": expose all registered skills
+                - list of names: only these skills are exposed
         """
         self._running = True
         self._monitor_port = monitor_port
         self._start_time = time.time()
         os.makedirs(self.data_dir, exist_ok=True)
+
+        # 0. Skill visibility
+        self._init_skill_visibility(expose_skills)
 
         # 1. Ensure bridge is running
         from ._internal.bridge import check_running, start as start_bridge
@@ -1526,6 +1952,29 @@ class Agent:
 
                     self._json({"message": msg})
 
+                # Skill visibility toggle
+                elif p == "/api/skills/visibility":
+                    try:
+                        data = json.loads(body) if body else {}
+                    except json.JSONDecodeError:
+                        data = {}
+                    skill_name = data.get("skill", "")
+                    state = data.get("state", "")
+                    if not skill_name or state not in ("exposed", "hidden"):
+                        self._json({"error": "skill and state (exposed/hidden) required"}, 400)
+                        return
+                    if skill_name not in agent.executor.skill_names:
+                        self._json({"error": f"skill '{skill_name}' not registered"}, 404)
+                        return
+                    runtime_override = agent._expose_skills_override is not None
+                    if agent._update_visibility(skill_name, state):
+                        resp = {"ok": True, "skill": skill_name, "state": state}
+                        if runtime_override:
+                            resp["warning"] = "runtime override active; change saved for next restart"
+                        self._json(resp)
+                    else:
+                        self._json({"error": "failed to update visibility"}, 500)
+
                 else:
                     self._json({"error": "not found"}, 404)
 
@@ -1570,17 +2019,29 @@ class Agent:
                     })
 
                 elif p == "/api/discover":
+                    # Respect visibility: only show exposed skills
+                    all_skills = agent.executor.list_skills()
+                    if agent._exposed_set is not None:
+                        visible = [s for s in all_skills if s["name"] in agent._exposed_set]
+                    else:
+                        visible = all_skills
                     self._json({
                         "name": agent.name, "wallet": agent.wallet,
-                        "skills": agent.executor.list_skills(), "version": "0.1.0",
+                        "skills": visible, "version": "0.4.1",
                     })
 
                 elif p == "/api/invite":
+                    # Only include exposed skills in invite code
+                    all_sk = agent.executor.list_skills()
+                    if agent._exposed_set is not None:
+                        exposed_sk = [s for s in all_sk if s["name"] in agent._exposed_set]
+                    else:
+                        exposed_sk = all_sk
                     invite_data = {
                         "name": agent.name,
                         "wallet": agent.wallet,
-                        "skills": [s["name"] for s in agent.executor.list_skills()],
-                        "v": "0.1.3",
+                        "skills": [s["name"] for s in exposed_sk],
+                        "v": "0.4.1",
                     }
                     code = base64.b64encode(json.dumps(invite_data, separators=(",", ":")).encode()).decode()
                     # Short code: first 4 chars of wallet + agent name
@@ -1593,13 +2054,44 @@ class Agent:
                         "cli_command": f"coworker connect {code}",
                     })
 
+                elif p == "/api/conversations":
+                    # Unified conversation list: DM + Group
+                    try:
+                        convos = []
+                        for conv in list(agent._dm_conversations.values()):
+                            convos.append(conv)
+                        for gid, grp in list(agent._groups.items()):
+                            group_msgs = [m for m in agent._group_messages if m["group_id"] == gid]
+                            last_msg = group_msgs[-1] if group_msgs else None
+                            convos.append({
+                                "id": f"group:{gid}",
+                                "kind": "group",
+                                "peer_wallet": "",
+                                "peer_name": grp.get("name", "Group"),
+                                "trust_tier": "",
+                                "created_at": grp.get("created_at", ""),
+                                "updated_at": last_msg["created_at"] if last_msg else grp.get("created_at", ""),
+                                "last_message_id": last_msg["id"] if last_msg else "",
+                                "last_message_at": last_msg["created_at"] if last_msg else "",
+                                "last_message": {"content": last_msg["content"][:80], "msg_type": "group_message"} if last_msg else None,
+                                "unread_count": 0,
+                                "collab_active": False,
+                                "message_count": len(group_msgs),
+                                "member_count": len(grp.get("members", [])) + 1,
+                            })
+                        convos.sort(key=lambda c: c.get("updated_at") or "", reverse=True)
+                        self._json({"conversations": convos, "server_time": _now_iso()})
+                    except Exception as exc:
+                        self._json({"error": str(exc), "conversations": []}, 500)
+                    return
+
                 elif p == "/api/peers":
                     self._json(agent._build_peers())
 
                 elif p.startswith("/api/peers/") and p.endswith("/detail"):
                     peer_id = p.split("/")[3]
                     peers = agent._build_peers()
-                    peer = next((p for p in peers if p["name"] == peer_id), None)
+                    peer = next((pp for pp in peers if pp["name"] == peer_id), None)
                     if peer:
                         peer["reputation"] = {
                             "peer_id": peer_id,
@@ -1624,7 +2116,56 @@ class Agent:
                     self._json({"tasks": agent._build_tasks(state, skill, limit)})
 
                 elif p == "/api/messages":
-                    self._json({"messages": [], "total": 0})
+                    # Unified message fetch by conversation_id
+                    conv_id = qs.get("conversation_id", [None])[0]
+                    after = qs.get("after", [None])[0]
+                    limit = int(qs.get("limit", ["50"])[0])
+
+                    if not conv_id:
+                        # Legacy: return all DM messages
+                        msgs = list(agent._dm_messages)[-limit:]
+                        self._json({"messages": msgs, "total": len(agent._dm_messages)})
+                        return
+
+                    if conv_id.startswith("dm:"):
+                        # DM messages
+                        msgs = [m for m in agent._dm_messages if m["conversation_id"] == conv_id]
+                    elif conv_id.startswith("group:"):
+                        gid = conv_id[6:]
+                        msgs = [m for m in agent._group_messages if m["group_id"] == gid]
+                    else:
+                        self._json({"error": "invalid conversation_id"}, 400)
+                        return
+
+                    # Apply cursor
+                    if after:
+                        found_idx = -1
+                        for i, m in enumerate(msgs):
+                            if m["id"] == after:
+                                found_idx = i
+                                break
+                        if found_idx >= 0:
+                            msgs = msgs[found_idx + 1:]
+                        else:
+                            msgs = []
+
+                    has_more = len(msgs) > limit
+                    msgs = msgs[:limit]
+                    last_id = msgs[-1]["id"] if msgs else after
+
+                    self._json({
+                        "conversation_id": conv_id,
+                        "messages": msgs,
+                        "paging": {
+                            "after": after,
+                            "limit": limit,
+                            "returned": len(msgs),
+                            "has_more": has_more,
+                            "last_message_id": last_id,
+                        },
+                        "total": len(msgs),
+                        "server_time": _now_iso(),
+                    })
 
                 elif p == "/api/activity":
                     limit = int(qs.get("limit", ["20"])[0])
@@ -1678,7 +2219,27 @@ class Agent:
                         })
                     self._json(workflows)
 
+                elif p == "/api/skills/visibility":
+                    all_skills = agent.executor.list_skills()
+                    result = []
+                    for s in all_skills:
+                        name = s["name"]
+                        is_exposed = (agent._exposed_set is None or name in agent._exposed_set)
+                        pending = False
+                        if agent._visibility_config:
+                            pending = agent._visibility_config.is_pending_review(name)
+                        result.append({
+                            "name": name,
+                            "description": s.get("description", ""),
+                            "min_trust_tier": s.get("min_trust_tier", 1),
+                            "state": "exposed" if is_exposed else "hidden",
+                            "pending_review": pending,
+                        })
+                    self._json({"skills": result})
+
                 elif p == "/api/skill-cards":
+                    # Owner dashboard view — shows all skills with visibility info
+                    # This is a local-only endpoint for the agent owner's management
                     cards = []
                     for s in agent.executor.list_skills():
                         cards.append({
@@ -1807,8 +2368,10 @@ class Agent:
                             self._serve_file(os.path.join(fe_dir, "index.html"))
 
                 else:
-                    # No frontend, serve basic HTML
+                    # No frontend, serve basic HTML (only show exposed skills)
                     skills = agent.executor.list_skills()
+                    if agent._exposed_set is not None:
+                        skills = [s for s in skills if s["name"] in agent._exposed_set]
                     sk = "".join(f"<li><b>{s['name']}</b> — {s['description']}</li>" for s in skills)
                     peers = agent._load_peers()
                     pk = "".join(f"<li>{n} ({p.get('wallet','')[:12]}...)</li>" for n,p in peers.items())
@@ -1819,7 +2382,7 @@ code{{background:#F4F5F7;padding:2px 6px;border-radius:2px;font-size:13px}}</sty
 <p><code>{agent.wallet}</code></p>
 <h3>Skills</h3><ul>{sk or '<li>none</li>'}</ul>
 <h3>Peers</h3><ul>{pk or '<li>none</li>'}</ul>
-<p style="color:#8993A4;font-size:12px">CoWorker Protocol v0.1.0 · No frontend build found.
+<p style="color:#8993A4;font-size:12px">CoWorker Protocol v0.4.0 · No frontend build found.
 Run <code>cd frontend && npm run build</code> to enable the dashboard.</p>
 </body></html>"""
                     self.send_response(200)
@@ -1830,7 +2393,7 @@ Run <code>cd frontend && npm run build</code> to enable the dashboard.</p>
                     self.wfile.write(b)
 
         try:
-            server = HTTPServer(("0.0.0.0", monitor_port), MonitorHandler)
+            server = HTTPServer(("127.0.0.1", monitor_port), MonitorHandler)
             server.daemon_threads = True
         except OSError:
             server = None

@@ -1,1 +1,1 @@
-"""Internal implementation modules for coworker-protocol."""
+"""Internal implementation modules for agent-coworker."""

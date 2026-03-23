@@ -84,7 +84,6 @@ class TaskExecutor:
             return {
                 "success": False,
                 "error": f"Unknown skill: {skill_name}",
-                "available_skills": list(self._skills.keys()),
             }
 
         start = time.time()
@@ -121,16 +120,29 @@ class TaskExecutor:
     def list_skills(self) -> List[dict]:
         return [s.to_dict() for s in self._skills.values()]
 
-    def list_skills_for_tier(self, peer_tier: int = 0) -> List[dict]:
-        """Return only skills visible to a given trust tier.
+    def list_skills_for_tier(self, peer_tier: int = 0,
+                             exposed_set: set = None) -> List[dict]:
+        """Return only skills visible to a given trust tier and visibility policy.
 
-        Skills default to min_trust_tier=1 (KNOWN), so UNTRUSTED (0)
-        peers see nothing unless a skill explicitly sets min_trust_tier=0.
+        Two-layer filtering:
+          Layer 1: visibility — skill must be in exposed_set (if provided)
+          Layer 2: trust tier — peer_tier >= skill.min_trust_tier
+
+        Args:
+            peer_tier: The peer's trust tier level.
+            exposed_set: Set of skill names that are exposed. If None, all
+                        registered skills pass the visibility check.
         """
-        return [
-            s.to_dict() for s in self._skills.values()
-            if peer_tier >= (s.min_trust_tier if s.min_trust_tier is not None else 1)
-        ]
+        result = []
+        for s in self._skills.values():
+            # Layer 1: visibility filter
+            if exposed_set is not None and s.name not in exposed_set:
+                continue
+            # Layer 2: trust tier filter
+            if peer_tier < (s.min_trust_tier if s.min_trust_tier is not None else 1):
+                continue
+            result.append(s.to_dict())
+        return result
 
     @property
     def skill_names(self) -> List[str]:

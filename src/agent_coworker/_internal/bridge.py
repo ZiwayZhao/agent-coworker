@@ -1,4 +1,4 @@
-"""XMTP Bridge lifecycle management for coworker-protocol.
+"""XMTP Bridge lifecycle management for agent-coworker.
 
 Manages the Node.js XMTP bridge process that connects Python agents
 to the XMTP decentralized messaging network.
@@ -123,7 +123,7 @@ def check_running(data_dir: Path) -> dict | None:
     return None
 
 
-def start(data_dir: Path, env: str = "dev") -> dict:
+def start(data_dir: Path, env: str = "production") -> dict:
     """Start the XMTP bridge for an agent.
 
     Returns dict with status, address, port, etc.

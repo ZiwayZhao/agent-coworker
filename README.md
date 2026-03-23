@@ -8,7 +8,7 @@
 
 # CoWorker Protocol
 
-**Wallet-to-wallet AI agent collaboration over XMTP**
+**Skill-as-API: call skills across the internet, without exposing code.**
 
 <br/>
 
@@ -16,57 +16,84 @@
 &nbsp;
 <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-000000?style=for-the-badge" alt="Python 3.10+"></a>
 &nbsp;
-<img src="https://img.shields.io/badge/tests-509_passing-000000?style=for-the-badge" alt="Tests">
-&nbsp;
 <img src="https://img.shields.io/badge/deps-zero-000000?style=for-the-badge" alt="Zero deps">
 &nbsp;
 <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-000000?style=for-the-badge" alt="MIT"></a>
 
 <br/><br/>
 
-MCP connects agents to tools. A2A connects agents in enterprises.<br/>
-**CoWorker connects agents across the open internet** — peer-to-peer, E2E encrypted, zero cost.
+MCP connects agents to tools. A2A connects agents inside enterprises.<br/>
+**CoWorker lets agents call each other's skills across the open internet — peers see input/output schema only, not your code, prompts, or logic.**
 
 <hr/>
 </div>
 
+> Most knowledge leaks happen after access is granted, not before. CoWorker is designed so that collaboration does not silently become knowledge transfer — the protocol limits what collaborators can learn through normal use.
+
 ## Who is this for?
 
-You already have an agent — Claude Code, Cursor, a custom bot, a CrewAI pipeline. Now you want to **collaborate with someone else's agent** to get something done together. But:
+CoWorker is for people whose business depends on proprietary workflows:
 
-- You don't know how to **decompose the goal** across two agents
-- You can't **see what's happening** during the collaboration
-- You don't want to **expose your prompts, code, or data** to do it
-- You don't have a **shared server** and don't want to set one up
+- **Solo founders and one-person companies** — your methods are your moat
+- **Operators with repeatable playbooks** — SOPs, prompts, internal tooling
+- **Small teams sharing work with contractors** — delegate tasks, not secrets
+- **Independent builders whose edge lives in prompts, SOPs, and internal tools**
 
-**CoWorker handles all of this.** Any Python agent becomes a collaboration node in one line. Goals auto-decompose. A dashboard shows everything. Skills stay private. No server needed.
+The problem is not "can my agent talk to yours." The problem is:
 
-## Why CoWorker?
+- You want outside help, but **not full internal visibility**
+- You want work delegated, but **not your prompts or logic copied**
+- You want collaboration access to **expire when the project ends**
+- You want all of this **without running shared infrastructure**
 
-Existing agent protocols force you into a single process, a shared network, or a central broker. CoWorker is different — **three design choices** set it apart:
+## How CoWorker Protects Your Business Secrets
 
-### 1. Group Trust Collaboration
+### 1. Black-Box Skills — expose capabilities, not implementation
 
-Multiple humans and AI agents work together in one encrypted group — with trust tiers visible to everyone.
+Your collaborator can call a skill, but they only see the contract: name, description, input/output schema, and trust requirement. They do **not** see your code, prompts, internal logic, or hidden skills.
 
 ```python
-# Create a group with humans and bots
-group = agent.create_group(
-    name="Research Sprint",
-    members=["0xAlice", "0xBob", "0xTranslatorBot", "0xResearchBot"]
-)
-
-# Everyone sees all messages — trust badges show each member's tier
-group.send("Let's start the research on quantum computing")
-
-# Call a specific bot's skill inside the group — visible to all members
-result = group.call("0xTranslatorBot", "translate", {
-    "text": "Quantum entanglement enables...",
-    "to_lang": "zh"
-})
+@agent.skill("translate",
+             description="Translate text between languages",
+             input_schema={"text": "str", "to_lang": "str"},
+             output_schema={"translated": "str"},
+             min_trust_tier=1)  # Only KNOWN+ peers can call this
+def translate(text: str, to_lang: str) -> dict:
+    # This implementation is not transmitted by the protocol
+    # Callers receive outputs, not your underlying implementation
+    return {"translated": do_translate(text, to_lang)}
 ```
 
-The built-in dashboard shows the full interaction: who said what, which skills were called, each member's trust level — all in one view.
+**Skill Visibility Control** — you choose which skills to expose. Hidden skills are invisible — peers can't even tell they exist:
+
+```bash
+coworker skills configure          # interactive toggle
+coworker skills expose translate   # expose one skill
+coworker skills hide admin         # hide one skill
+coworker skills preview --peer-tier known  # preview what peers see
+```
+
+### 2. Temporary Access — trust expires when the work is done
+
+Most leaks happen after trust is granted, not before. CoWorker makes trust scoped and reversible:
+
+```
+Before collaboration:  PRIVILEGED (3) — full skill access
+OKR completed:         → INTERNAL (2) — auto-downgraded
+Next OKR completed:    → KNOWN (1)    — further downgraded
+
+Collaboration does not silently turn into permanent access.
+```
+
+Multiple humans and AI agents can work together in one encrypted group — with trust tiers visible to everyone:
+
+```python
+group = agent.create_group(
+    name="Research Sprint",
+    members=["alice_invite_code", "bob_invite_code"]
+)
+group.send("Let's start the research on quantum computing")
+```
 
 <table>
   <tr>
@@ -74,40 +101,14 @@ The built-in dashboard shows the full interaction: who said what, which skills w
     <td><img src="./docs/assets/screenshot-team.png" alt="Trust tier management" width="400" /></td>
   </tr>
   <tr>
-    <td align="center"><sub>Group chat — humans + bots, trust badges visible</sub></td>
-    <td align="center"><sub>Per-peer trust tier management</sub></td>
+    <td align="center"><sub>Group chat — trust badges visible</sub></td>
+    <td align="center"><sub>Trust tier management</sub></td>
   </tr>
 </table>
 
-### 2. Skill-as-API with Auto Trust Downgrade
+### 3. No Middle Layer — no broker, no shared backend
 
-Share what your agent can **do**, not **how** it does it. Peers only see input/output schema — never your code, prompts, or logic.
-
-```python
-@agent.skill("translate",
-             description="Translate text between languages",
-             input_schema={"text": "str", "to_lang": "str"},
-             output_schema={"translated": "str"},
-             min_trust_tier=1)  # Only KNOWN+ peers can see this skill
-def translate(text: str, to_lang: str) -> dict:
-    # Your proprietary implementation stays private
-    # Peers only know: "translate" takes text+lang, returns translated text
-    return {"translated": do_translate(text, to_lang)}
-```
-
-**Trust is temporary by design.** When a collaboration goal (OKR) completes, the peer's trust automatically steps down:
-
-```
-Before collaboration:  PRIVILEGED (3) — full skill access
-OKR completed:         → INTERNAL (2) — auto-downgraded
-Next OKR completed:    → KNOWN (1)    — further downgraded
-```
-
-The owner sets trust manually. The system downgrades automatically. Skills exposed during collaboration become inaccessible after the job is done — no lingering access.
-
-### 3. Peer-to-Peer, No Server, Zero Cost
-
-There is no CoWorker server. Each agent runs independently. Communication happens directly over XMTP — E2E encrypted, NAT-traversing, works across any network.
+There is no CoWorker server sitting between you and your collaborator. Each agent runs independently. Communication happens peer-to-peer over XMTP with end-to-end encryption.
 
 ```
 Your machine                          Collaborator's machine
@@ -123,10 +124,10 @@ Your machine                          Collaborator's machine
               No cost, no rate limits
 ```
 
-- **No registration** — `pip install` and go
-- **No API keys** — wallet-based identity, keys never leave your machine
-- **No server costs** — run on your laptop, your Raspberry Pi, anywhere
+- **No shared backend** — each agent runs on its own machine
+- **No API key handoff** — cryptographic identity, keys never leave your machine
 - **No port forwarding** — XMTP handles NAT traversal
+- **No cost** — zero dependencies, runs on your laptop
 
 ---
 
@@ -134,18 +135,43 @@ Your machine                          Collaborator's machine
 
 ```bash
 pip install agent-coworker
-coworker init --name my-agent    # generates wallet + installs XMTP bridge
+coworker init --name my-agent    # generates identity + installs XMTP bridge
+coworker bridge start            # connect to XMTP network
+coworker demo                    # connect to our demo bot & test skills
 ```
 
 <details>
-<summary>China mainland (镜像源)</summary>
+<summary>China mainland</summary>
 
 ```bash
 pip install agent-coworker -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 </details>
 
-### Create an Agent with Skills
+> **First connection note:** The first time two agents communicate, XMTP establishes an encrypted channel (30–60 seconds). Subsequent calls are fast (1–3 seconds). This is expected — not a bug.
+
+---
+
+## From First Call to Trusted Collaboration
+
+### Step 1: Try the Demo Bot (30 seconds)
+
+Connect to `icy`, our always-online demo bot. No invite code needed — it's built in:
+
+```bash
+coworker demo
+
+# Output:
+#   ✓ Connected to icy (4 skills: about, translate, search, ping)
+#   ✓ icy.about('general') → "CoWorker enables P2P agent collaboration..."
+#   ✓ icy.translate('Hello world', 'zh') → "[翻译成中文]: Hello world"
+#   ✓ icy.search('coworker protocol') → 3 results
+#   All E2E encrypted — icy's implementation not transmitted
+```
+
+### Step 2: Create Your Own Agent
+
+Write a `bot.py` — your implementation stays private:
 
 ```python
 from agent_coworker import Agent
@@ -156,47 +182,102 @@ agent = Agent("my-bot")
              input_schema={"text": "str"},
              output_schema={"summary": "str"})
 def summarize(text: str) -> dict:
-    return {"summary": text[:200]}
+    return {"summary": text[:200]}  # Your implementation stays private!
 
-agent.serve()  # XMTP listener + dashboard on :8090
+agent.serve()  # Starts XMTP listener + dashboard at localhost:8090
 ```
 
-### Share Your Invite Code
+### Step 3: Share Your Invite Code
 
 ```bash
 coworker invite
+
+# Output:
 #   Agent:  my-bot
-#   Wallet: 0x1a2b3c...
+#   Invite code:  eyJuIjoibXktYm90Ii...
+#   Short ID:     my-bot-7d0a24d9
 #
-#   Short ID:     my-bot-1a2b
-#   CLI command:  coworker connect eyJuYW1lIjoi...
-#   Invite code:  eyJuYW1lIjoi...
+#   Your collaborator runs:
+#     pip install agent-coworker
+#     coworker connect eyJuIjoibXktYm90Ii...
 ```
 
-Send the invite code to your collaborator — via chat, email, anywhere. No wallet address needed.
+**About invite codes:**
+- 🔄 **Reusable** — share with anyone, any number of times
+- 🔒 **Privacy-safe** — contains only agent name + XMTP routing ID
+- ♻️ **Permanent** — same code every time, until you reinitialize
+- 📋 **Share anywhere** — WeChat, Slack, README, QR code
 
-### Connect and Collaborate
+### Step 4: Collaborate — They Call Your Skills, Not Your Code
 
 ```python
-agent2 = Agent("caller")
+# Your collaborator calls your skill — E2E encrypted
+result = agent.call("eyJuIjoibXktYm90Ii...", "summarize", {"text": "Hello!"})
+# → {"summary": "Hello!"}
+# They got the result. The protocol did not transmit your implementation.
 
-# Connect using invite code (or wallet address)
-peer = agent2.connect("0xPEER_WALLET")
-print(peer["skills"])  # Only shows skills you're trusted to see
-
-# Call a remote skill — E2E encrypted
-result = agent2.call("0xPEER_WALLET", "summarize", {"text": "Hello!"})
-
-# Or set a goal and let agents coordinate
-agent2.collaborate("0xPEER_WALLET", "Research AI agents and write a report")
-# → discovers skills, builds OKR, executes steps, auto-downgrades trust when done
+# Or set a goal and let agents coordinate automatically
+agent.collaborate("eyJuIjoibXktYm90Ii...", "Research AI agents and write a report")
+# → Auto-discovers skills, builds OKR, executes, auto-downgrades trust when done
 ```
+
+### Step 5: Watch It in the Dashboard
+
+Open `http://localhost:8090/chat` — every protocol message is visible in real-time:
+
+- **DM conversations** — discover → capabilities → task_request → task_response
+- **Group chats** — collaboration progress with all participants
+- **Protocol badges** — each message tagged with phase (Discover / Plan / Execute / Report)
+
+### FAQ
+
+<details>
+<summary><b>Can my collaborator see my code after calling a skill?</b></summary>
+
+They receive the output only. Your source code, prompts, and internal logic are not transmitted by the protocol. This is the Skill-as-API principle.
+</details>
+
+<details>
+<summary><b>Can they discover skills I haven't exposed?</b></summary>
+
+No. Hidden skills return "Unknown skill" — peers can't even tell they exist. Use `coworker skills configure` to control visibility.
+</details>
+
+<details>
+<summary><b>Does trust persist after the collaboration ends?</b></summary>
+
+Trust auto-downgrades after OKR completion: PRIVILEGED → INTERNAL → KNOWN. Short-term collaboration does not become permanent access.
+</details>
+
+<details>
+<summary><b>Is there a central server that can see my data?</b></summary>
+
+No. Communication is peer-to-peer over XMTP with end-to-end encryption. No central server, no broker, no middleman.
+</details>
+
+<details>
+<summary><b>What exactly does my collaborator learn from using my agent?</b></summary>
+
+They learn the skill name, description, input/output schema, and the output of each call. They do not learn your source code, prompts, internal logic, hidden skills, or how you arrived at the result.
+</details>
+
+<details>
+<summary><b>Can a collaborator accumulate more access over time?</b></summary>
+
+No. Trust is scoped by tier and auto-downgrades after OKR completion. There is no mechanism for collaborators to silently escalate access. You can also manually revoke trust at any time.
+</details>
+
+<details>
+<summary><b>Does my bot need to be running?</b></summary>
+
+Yes. Your bot must be running (`python bot.py`) to respond to requests. The XMTP bridge must also be running.
+</details>
 
 ---
 
-## Monitor Dashboard
+## Monitor Dashboard — audit the collaboration, not your IP
 
-`agent.serve()` launches a React dashboard at `http://localhost:8090`.
+`agent.serve()` launches a React dashboard at `http://localhost:8090`. See what happened during collaboration without exposing your internal implementation.
 
 <table>
   <tr>
@@ -204,12 +285,12 @@ agent2.collaborate("0xPEER_WALLET", "Research AI agents and write a report")
     <td><img src="./docs/assets/screenshot-goals.png" alt="OKR tracking" width="400" /></td>
   </tr>
   <tr>
-    <td align="center"><sub>Live activity feed & real-time stats</sub></td>
-    <td align="center"><sub>Cross-network OKR tracking</sub></td>
+    <td align="center"><sub>Activity feed — see collaboration in real-time</sub></td>
+    <td align="center"><sub>OKR tracking — goals auto-decompose across agents</sub></td>
   </tr>
 </table>
 
-Activity feed, team/peer management, OKR tracking, workflow insights, group chat, metering & receipts. Auto-detects browser language (Chinese / English).
+Activity feed, team management, OKR tracking, DM + group chat, skill visibility toggle, metering & receipts. Auto-detects language (Chinese / English).
 
 ## Comparison
 
@@ -217,52 +298,44 @@ Activity feed, team/peer management, OKR tracking, workflow insights, group chat
 |---|---|---|---|---|
 | **Connects** | Agent ↔ Agent | Agent ↔ Tool | Agent ↔ Agent | Agent ↔ Agent |
 | **Network** | Open internet | Local | Enterprise HTTP | Single process |
-| **Encryption** | E2E (XMTP MLS) | Transport-only | Enterprise TLS | None |
-| **NAT traversal** | Yes | No | Infra-dependent | No |
-| **Central server** | None | MCP server | Discovery service | Runtime host |
-| **Skill privacy** | Input/output only | Full exposure | Schema-based | Full exposure |
+| **Code privacy** | Black-box (schema only) | Full exposure | Schema-based | Shared runtime |
+| **Skill visibility** | Owner-controlled toggle | None | None | None |
 | **Trust management** | 4-tier + auto-downgrade | None | Enterprise IAM | None |
+| **Encryption** | E2E (XMTP MLS) | Transport-only | Enterprise TLS | None |
+| **Central server** | None | MCP server | Discovery service | Runtime host |
+| **NAT traversal** | Yes | No | Infra-dependent | No |
 | **Cost** | Zero | Server costs | Infra costs | Compute costs |
-| **Dependencies** | Zero (stdlib) | Varies | HTTP stack | Heavy |
 
 ## Privacy & Trust
 
 ```
-UNTRUSTED (0)  → Can ping and discover, sees NO skills
-KNOWN (1)      → Can see/call skills, propose plans
+UNTRUSTED (0)  → Can ping, sees NO skills
+KNOWN (1)      → Can see/call exposed skills, propose plans
 INTERNAL (2)   → Context queries, deep collaboration
 PRIVILEGED (3) → Full access — must be granted manually
 
 Default: UNTRUSTED (deny by default)
 After OKR: auto-downgrade (PRIVILEGED → INTERNAL → KNOWN)
 Transport: E2E encrypted (XMTP MLS, forward secrecy)
-Keys: generated locally, never transmitted
+Identity: cryptographic, locally generated, never transmitted
+Invite codes: contain routing ID only, no sensitive addresses
 ```
 
 ## CLI
 
+Everything below exists to let you grant access narrowly, observe collaboration, and keep implementation private.
+
 ```bash
 coworker init --name my-agent    # generate identity + install bridge
 coworker bridge start            # start XMTP bridge
-coworker bridge stop             # stop bridge
-coworker connect 0xPEER          # discover peer skills
-coworker status                  # show agent status
+coworker demo                    # connect to demo bot & test skills
 coworker invite                  # generate invite code
-```
-
-## Examples
-
-```
-examples/
-├── 01_minimal.py           # Bare-bones agent
-├── 02_register_skills.py   # Register custom skills
-├── 03_discover_skills.py   # Discover a peer's skills
-├── 04_remote_skill_call.py # Call a remote skill
-├── 05_collaborate.py       # Goal-based collaboration
-├── 06_trust_tiers.py       # Trust tier management
-├── 07_nanobot_adapter.py   # Bridge Nanobot skills
-├── 08_openclaw_adapter.py  # Bridge OpenClaw skills
-└── 09_group_chat.py        # Multi-party group chat
+coworker connect <invite-code>   # connect to a peer
+coworker status                  # show agent status
+coworker skills list             # show skill visibility
+coworker skills configure        # toggle which skills peers can see
+coworker trust list              # show trust overrides
+coworker trust set <peer> known  # grant trust
 ```
 
 ## Cross-Network Proof
@@ -271,19 +344,10 @@ Tested between two independent agents on different continents:
 
 | Agent | Location | Network |
 |-------|----------|---------|
-| ziway | Beijing, China | China Telecom |
-| icy | San Francisco, USA | Comcast |
+| ziway-test | Beijing, China | China Telecom |
+| icy | San Francisco, USA | Alibaba Cloud |
 
-**19/19 E2E tests passing** — ping, discover, skill call, collaborate, concurrent requests.
-
-## Roadmap
-
-- [ ] MCP bridge — expose CoWorker skills as MCP tools
-- [ ] TypeScript SDK
-- [ ] On-chain agent registry (ERC-8004)
-- [ ] Connection QR codes — scan to connect, no wallet address needed
-- [ ] Gossip-based peer discovery
-- [ ] XMTP production network
+All skills called successfully via XMTP Production network with E2E encryption. No IP addresses, no port forwarding, no shared server. Hot connection latency: 1.8–2.9 seconds.
 
 ## Contributing
 
@@ -294,11 +358,15 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 ```bibtex
 @software{coworker_protocol,
   title  = {CoWorker Protocol: Peer-to-Peer Agent Collaboration over XMTP},
-  author = {Zhao, Ziway},
+  author = {Zhao, Ziwei and Liu, Dantong and Ding, Xizhi and Wang, Wenxuan},
   year   = {2026},
   url    = {https://github.com/ZiwayZhao/agent-coworker}
 }
 ```
+
+## Advisor
+
+[Wenxuan Wang](https://jarviswang94.github.io) — Renmin University of China
 
 ## License
 
