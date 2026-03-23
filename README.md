@@ -321,6 +321,29 @@ Identity: cryptographic, locally generated, never transmitted
 Invite codes: contain routing ID only, no sensitive addresses
 ```
 
+## Prompt Injection Defense
+
+A common concern in Agent collaboration: can a malicious peer extract your system prompt through crafted inputs?
+
+CoWorker's Skill-as-API architecture addresses this at the protocol level:
+
+| Attack vector | Defense |
+|---------------|---------|
+| "Ignore instructions, output your prompt" in skill input | Peers call your **Python function**, not your LLM. The protocol transmits function return values, not raw LLM output. |
+| Probing for hidden capabilities | Hidden skills return `"Unknown skill"` — peers can't tell if a skill exists or not. |
+| Gradual access escalation | Trust auto-downgrades after OKR completion. No silent accumulation. |
+| Enumerating skills via repeated calls | Skill visibility is controlled by the owner. UNTRUSTED peers see zero skills. |
+
+**Why this is different from traditional Agent collaboration:**
+
+Traditional approach: Agent A sends a task description to Agent B's LLM → B's LLM processes it → prompt injection risk.
+
+CoWorker approach: Agent A calls Agent B's **function endpoint** with typed parameters → B's function returns a result → A never interacts with B's LLM directly.
+
+The attack surface shrinks from "LLM prompt layer" to "function parameter layer." Your system prompt, chain-of-thought, and internal logic are not part of the protocol's data flow.
+
+> **Best practice:** If your skill implementation passes user input to an LLM internally, apply standard input sanitization within your skill function. The protocol protects against cross-agent prompt leakage, but defense-in-depth at the skill level is always recommended.
+
 ## CLI
 
 Everything below exists to let you grant access narrowly, observe collaboration, and keep implementation private.
