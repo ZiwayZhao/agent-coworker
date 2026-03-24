@@ -6,6 +6,8 @@
 
 <div align="center">
 
+<img src="docs/assets/logo.png" alt="CoWorker Logo" width="120"/>
+
 # CoWorker Protocol
 
 **Skill-as-API: call skills across the internet, without exposing code.**
