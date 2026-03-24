@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480">
+  <style>
+    @keyframes typing { from { width: 0 } to { width: 100% } }
+    @keyframes blink { 0%,100% { opacity: 1 } 50% { opacity: 0 } }
+    @keyframes appear1 { 0%,15% { opacity: 0 } 16%,100% { opacity: 1 } }
+    @keyframes appear2 { 0%,30% { opacity: 0 } 31%,100% { opacity: 1 } }
+    @keyframes appear3 { 0%,50% { opacity: 0 } 51%,100% { opacity: 1 } }
+    @keyframes appear4 { 0%,65% { opacity: 0 } 66%,100% { opacity: 1 } }
+    @keyframes appear5 { 0%,80% { opacity: 0 } 81%,100% { opacity: 1 } }
+    text { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    .bg { fill: #0a0a0a; }
+    .bar { fill: #161616; }
+    .dim { fill: #555; }
+    .text { fill: #ededed; }
+    .green { fill: #00d47b; }
+    .blue { fill: #3b82f6; }
+    .yellow { fill: #f59e0b; }
+    .gray { fill: #888; }
+  </style>
+  
+  <!-- Background -->
+  <rect class="bg" width="800" height="480" rx="12"/>
+  
+  <!-- Title bar -->
+  <rect class="bar" width="800" height="36" rx="12"/>
+  <rect class="bar" x="0" y="24" width="800" height="12"/>
+  <circle cx="20" cy="18" r="6" fill="#FF5F56"/>
+  <circle cx="38" cy="18" r="6" fill="#FFBD2E"/>
+  <circle cx="56" cy="18" r="6" fill="#27C93F"/>
+  <text x="400" y="22" text-anchor="middle" font-size="13" class="dim">CoWorker Protocol — Demo</text>
+  
+  <!-- Line 1: command -->
+  <g style="animation: appear1 8s infinite">
+    <text x="20" y="70" font-size="14" class="green">$ </text>
+    <text x="36" y="70" font-size="14" class="text">coworker request icy translate --input '{"text":"hello"}'</text>
+  </g>
+  
+  <!-- Line 2: sent -->
+  <g style="animation: appear1 8s infinite">
+    <text x="20" y="95" font-size="14" class="green">  → </text>
+    <text x="56" y="95" font-size="14" class="gray">Async request sent: translate → icy (E2E encrypted)</text>
+  </g>
+  
+  <!-- Line 3: task ID -->
+  <g style="animation: appear1 8s infinite">
+    <text x="20" y="115" font-size="14" class="gray">    Task ID: a1b2c3d4...</text>
+  </g>
+  
+  <!-- Line 4: result command -->
+  <g style="animation: appear2 8s infinite">
+    <text x="20" y="155" font-size="14" class="green">$ </text>
+    <text x="36" y="155" font-size="14" class="text">coworker result a1b2c3d4</text>
+  </g>
+  
+  <!-- Line 5: polling -->
+  <g style="animation: appear2 8s infinite">
+    <text x="20" y="180" font-size="14" class="gray">  Polling for response...</text>
+  </g>
+  
+  <!-- Line 6: completed -->
+  <g style="animation: appear3 8s infinite">
+    <text x="20" y="205" font-size="14" class="green">  ✓ Completed!</text>
+  </g>
+  
+  <!-- Line 7-9: result JSON -->
+  <g style="animation: appear3 8s infinite">
+    <text x="20" y="235" font-size="14" class="text">  {</text>
+    <text x="20" y="255" font-size="14" class="green">    "translated"</text>
+    <text x="160" y="255" font-size="14" class="text">: "[翻译成中文]: hello",</text>
+    <text x="20" y="275" font-size="14" class="text">    "from_lang": "auto"</text>
+    <text x="20" y="295" font-size="14" class="text">  }</text>
+  </g>
+  
+  <!-- Separator -->
+  <g style="animation: appear4 8s infinite">
+    <line x1="20" y1="320" x2="780" y2="320" stroke="#333" stroke-width="1"/>
+  </g>
+  
+  <!-- Key points -->
+  <g style="animation: appear4 8s infinite">
+    <text x="20" y="350" font-size="14" class="text" font-weight="bold">What happened:</text>
+    <text x="20" y="375" font-size="13" class="green">✓ </text><text x="36" y="375" font-size="13" class="gray">Request sent via XMTP (E2E encrypted, peer can be offline)</text>
+    <text x="20" y="395" font-size="13" class="green">✓ </text><text x="36" y="395" font-size="13" class="gray">icy processed it — source code never left their machine</text>
+    <text x="20" y="415" font-size="13" class="green">✓ </text><text x="36" y="415" font-size="13" class="gray">Trust auto-downgrades after task completion</text>
+  </g>
+  
+  <!-- CTA -->
+  <g style="animation: appear5 8s infinite">
+    <text x="20" y="455" font-size="13" class="blue">pip install agent-coworker</text>
+    <text x="280" y="455" font-size="13" class="dim">·</text>
+    <text x="300" y="455" font-size="13" class="blue">github.com/ZiwayZhao/agent-coworker</text>
+  </g>
+</svg>

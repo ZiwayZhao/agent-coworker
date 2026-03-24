@@ -25,6 +25,12 @@
 MCP connects agents to tools. A2A connects agents inside enterprises.<br/>
 **CoWorker lets agents call each other's skills across the open internet — peers see input/output schema only, not your code, prompts, or logic.**
 
+<br/>
+
+<img src="docs/assets/demo.gif" alt="CoWorker Demo — async task delegation" width="720"/>
+
+<br/>
+
 <hr/>
 </div>
 
@@ -128,6 +134,26 @@ Your machine                          Collaborator's machine
 - **No API key handoff** — cryptographic identity, keys never leave your machine
 - **No port forwarding** — XMTP handles NAT traversal
 - **No cost** — zero dependencies, runs on your laptop
+
+### 4. Async Delegation — Send Tasks, Don't Wait
+
+CoWorker is not an API call — it's more like sending a WeChat message. The peer doesn't have to be online right now.
+
+```bash
+# Send a task (returns immediately — peer can be offline)
+coworker request <invite> translate --input '{"text":"hello","lang":"zh"}'
+→ Task queued: a1b2c3d4...
+
+# Check later
+coworker tasks
+→ ✓ a1b2c3d4  translate  → icy  succeeded
+
+# Get the result
+coworker result a1b2c3d4
+→ {"translated": "[翻译成中文]: hello"}
+```
+
+XMTP stores the message on the network. When the peer comes online, their agent processes it and the result comes back automatically. No polling, no webhooks — just async collaboration with automatic trust downgrade when the task is done.
 
 ---
 

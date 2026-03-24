@@ -25,6 +25,12 @@
 MCP 让 Agent 连工具，A2A 让 Agent 在企业内互通。<br/>
 **CoWorker 让 Agent 在开放互联网上互相调用技能——对方只能看到输入输出 schema，看不到你的代码、提示词和逻辑。**
 
+<br/>
+
+<img src="docs/assets/demo.gif" alt="CoWorker Demo — 异步任务委托" width="720"/>
+
+<br/>
+
 <hr/>
 </div>
 
@@ -128,6 +134,26 @@ group.send("开始量子计算的调研吧")
 - **不用交出 API key** — 密钥本地生成，从不离开你的机器
 - **不用端口转发** — XMTP 处理 NAT 穿透
 - **零成本** — 零依赖，笔记本就能跑
+
+### 4. 异步委托 — 发消息，不用等
+
+CoWorker 不是 API 调用——更像发微信。对方不在线也没关系。
+
+```bash
+# 发送任务（立刻返回，对方可以不在线）
+coworker request <邀请码> translate --input '{"text":"hello","lang":"zh"}'
+→ Task queued: a1b2c3d4...
+
+# 稍后查看
+coworker tasks
+→ ✓ a1b2c3d4  translate  → icy  succeeded
+
+# 获取结果
+coworker result a1b2c3d4
+→ {"translated": "[翻译成中文]: hello"}
+```
+
+XMTP 会在网络上存储消息。对方上线后，Agent 自动处理并回传结果。无需轮询，无需 webhook——异步协作，任务完成后信任自动降级。
 
 ---
 
