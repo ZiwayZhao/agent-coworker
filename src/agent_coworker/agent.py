@@ -572,6 +572,13 @@ class Agent:
         if msg_type in RESPONSE_MSG_TYPES:
             # Record tracked response into DM conversation before delivering
             self._record_tracked_response(msg)
+            # Check if this matches an async task (only for task_response/task_error)
+            if correlation_id and msg_type in ("task_response", "task_error"):
+                if self._handle_async_response(
+                        correlation_id, msg.get("payload", {}),
+                        sender_wallet=sender_wallet, msg_type=msg_type):
+                    print(f"  ← {msg_type} [async] (corr: {correlation_id[:8] if correlation_id else '?'})")
+                # Also put in response_box in case sync call() is also waiting
             self._response_box[correlation_id] = msg
             print(f"  ← {msg_type} (corr: {correlation_id[:8] if correlation_id else '?'})")
             return
@@ -1146,6 +1153,154 @@ class Agent:
             last_error = f"timeout ({timeout}s)"
 
         return {"success": False, "error": last_error}
+
+    # ── Async Task Delegation ────────────────────────────────
+
+    def _ensure_task_queue(self):
+        """Lazy-init the async task queue."""
+        if not hasattr(self, '_task_queue') or self._task_queue is None:
+            from ._internal.task_queue import AsyncTaskQueue
+            self._task_queue = AsyncTaskQueue(self.data_dir)
+
+    def request(self, wallet_address: str, skill_name: str, input_data: dict,
+                task_id: str | None = None) -> str:
+        """Send an async task request. Returns immediately with task_id.
+
+        The request is sent via XMTP (store-and-forward). If the peer is
+        offline, XMTP queues the message. When the peer comes online,
+        their agent processes it and sends back a response, which is
+        picked up by our poll loop and stored locally.
+
+        Args:
+            wallet_address: Peer's inbox ID or wallet address.
+            skill_name: Name of the skill to call.
+            input_data: Input parameters for the skill.
+            task_id: Optional idempotency key. Auto-generated if not provided.
+
+        Returns:
+            task_id string. Use get_result(task_id) to check status later.
+        """
+        self._ensure_task_queue()
+        from ._internal.task_queue import AsyncTask
+
+        if task_id is None:
+            task_id = str(uuid.uuid4())  # Full UUID for async tasks (not _uid() which is 8 chars)
+
+        # Idempotency: if task already exists, just return the ID
+        if self._task_queue.exists(task_id):
+            print(f"  ℹ Task {task_id[:8]} already exists (idempotent)")
+            return task_id
+
+        corr_id = str(uuid.uuid4())  # Full UUID for correlation
+
+        # Create and persist task locally
+        task = AsyncTask(
+            task_id=task_id,
+            peer_inbox=wallet_address,
+            skill=skill_name,
+            input_data=input_data,
+            peer_name=wallet_address[:12] + "...",
+            correlation_id=corr_id,
+        )
+        if not self._task_queue.save(task):
+            return task_id  # Saved failed, but return ID (caller can retry)
+
+        # Send via XMTP (store-and-forward)
+        try:
+            self.client.send(wallet_address, "task_request", {
+                "skill": skill_name,
+                "input": input_data,
+                "async": True,
+                "task_id": task_id,
+            }, correlation_id=corr_id)
+        except Exception as e:
+            # Mark task as failed if send fails
+            self._task_queue.fail(task_id, f"Send failed: {e}")
+            print(f"  ✗ Failed to send request: {e}")
+            return task_id
+
+        # Track DM
+        self._store_dm_message(
+            peer_wallet=wallet_address,
+            peer_name=task.peer_name,
+            direction="outbound",
+            msg_type="task_request",
+            content=f"[async] Call {skill_name}({json.dumps(input_data, ensure_ascii=False)[:80]})",
+            payload={"skill": skill_name, "input": input_data, "task_id": task_id},
+            correlation_id=corr_id,
+            phase="execute",
+            skill=skill_name,
+        )
+
+        self._log_activity("task",
+                         f"Async request: {skill_name}",
+                         f"Sent to {task.peer_name}, task_id={task_id[:8]}",
+                         peer=task.peer_name)
+
+        print(f"  → Async request sent: {skill_name} → {task.peer_name}")
+        print(f"    Task ID: {task_id[:8]}...")
+        print(f"    Check status: agent.get_result('{task_id[:8]}...')")
+        return task_id
+
+    def get_result(self, task_id: str) -> dict:
+        """Check the status/result of an async task.
+
+        Returns:
+            {
+                "task_id": "...",
+                "state": "queued|succeeded|failed|expired",
+                "skill": "translate",
+                "result": {...} or None,
+                "error": "..." or None,
+                "created_at": "...",
+                "peer_name": "...",
+            }
+        """
+        self._ensure_task_queue()
+        task = self._task_queue.load(task_id)
+        if task is None:
+            return {"task_id": task_id, "state": "not_found", "error": "Unknown task ID"}
+        return task.to_dict()
+
+    def list_async_tasks(self, state: str | None = None, limit: int = 20) -> list:
+        """List async tasks, optionally filtered by state."""
+        self._ensure_task_queue()
+        return [t.to_dict() for t in self._task_queue.list_tasks(state=state, limit=limit)]
+
+    def _handle_async_response(self, correlation_id: str, payload: dict,
+                               sender_wallet: str = "", msg_type: str = ""):
+        """Called when a task_response/task_error arrives that may match an async task.
+
+        Validates: correlation_id + sender must match the original request.
+        """
+        self._ensure_task_queue()
+        task = self._task_queue.find_by_correlation(correlation_id)
+        if task is None:
+            return False
+
+        # Validate sender matches original target
+        if sender_wallet and task.peer_inbox and sender_wallet != task.peer_inbox:
+            import logging
+            logging.getLogger("coworker.task_queue").warning(
+                "Async response sender mismatch: expected=%s got=%s task=%s",
+                task.peer_inbox[:12], sender_wallet[:12], task.task_id[:8])
+            return False
+
+        success = payload.get("success", False)
+        if success:
+            self._task_queue.complete(task.task_id, payload.get("result", {}))
+            print(f"  ✓ Async task completed: {task.skill} (task={task.task_id[:8]})")
+        else:
+            error = payload.get("error", payload.get("error_message", "unknown error"))
+            self._task_queue.fail(task.task_id, error)
+            print(f"  ✗ Async task failed: {task.skill} (task={task.task_id[:8]})")
+
+        self._log_activity("task",
+                         f"Async {'completed' if success else 'failed'}: {task.skill}",
+                         f"task_id={task.task_id[:8]}, peer={task.peer_name}",
+                         peer=task.peer_name,
+                         status="completed" if success else "failed")
+        return True
 
     def collaborate(self, wallet_address: str, goal: str, timeout: float = 120.0) -> dict:
         """Auto-collaborate with a remote agent toward a shared goal."""
@@ -1952,6 +2107,22 @@ class Agent:
 
                     self._json({"message": msg})
 
+                # Async task request via API
+                elif p == "/api/async-tasks":
+                    try:
+                        data = json.loads(body) if body else {}
+                    except json.JSONDecodeError:
+                        data = {}
+                    wallet = data.get("wallet", "")
+                    skill = data.get("skill", "")
+                    input_data = data.get("input", {})
+                    if not wallet or not skill:
+                        self._json({"error": "wallet and skill required"}, 400)
+                        return
+                    task_id = agent.request(wallet, skill, input_data)
+                    self._json({"task_id": task_id, "state": "queued"})
+                    return
+
                 # Skill visibility toggle
                 elif p == "/api/skills/visibility":
                     try:
@@ -2256,6 +2427,17 @@ class Agent:
                             },
                         })
                     self._json(cards)
+
+                elif p == "/api/async-tasks":
+                    state_filter = qs.get("state", [None])[0]
+                    limit = int(qs.get("limit", ["20"])[0])
+                    tasks = agent.list_async_tasks(state=state_filter, limit=limit)
+                    self._json({"tasks": tasks, "total": len(tasks)})
+
+                elif p.startswith("/api/async-tasks/") and not p.endswith("/"):
+                    tid = p.split("/")[-1]
+                    result = agent.get_result(tid)
+                    self._json(result)
 
                 elif p == "/api/metering/receipts":
                     limit = int(qs.get("limit", ["50"])[0])

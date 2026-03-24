@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 
 # ── Demo bot (always online for new users to test) ────
 DEMO_BOT_NAME = "icy"
@@ -777,6 +777,158 @@ def cmd_skills(args):
         print(f"  Next serve() will run the first-time guide.")
 
 
+def cmd_request(args):
+    """Send an async task request to a peer."""
+    import threading
+    from agent_coworker.agent import Agent
+
+    agent = Agent("cli-caller", data_dir=str(COWORKER_DIR))
+    agent._running = True
+
+    # Start poll loop to receive responses
+    poll = threading.Thread(target=agent._poll_loop, daemon=True)
+    poll.start()
+    time.sleep(1)
+
+    target = args.target
+    skill = args.skill
+    input_str = args.input or "{}"
+
+    try:
+        input_data = json.loads(input_str)
+    except json.JSONDecodeError:
+        print(f"  ✗ Invalid JSON input: {input_str}")
+        sys.exit(1)
+
+    # Decode invite if needed
+    target_addr = _resolve_target(target)
+
+    task_id = agent.request(target_addr, skill, input_data)
+    print(f"\n  Task queued: {task_id[:8]}...")
+    print(f"  Check status: coworker tasks")
+    print(f"  Get result:   coworker result {task_id[:8]}")
+    agent._running = False
+
+
+def cmd_tasks(args):
+    """List async tasks."""
+    from agent_coworker._internal.task_queue import AsyncTaskQueue, ACTIVE_STATES
+
+    queue = AsyncTaskQueue(str(COWORKER_DIR))
+    state_filter = getattr(args, 'state', None)
+    tasks = queue.list_tasks(state=state_filter, limit=30)
+
+    if not tasks:
+        print("  No async tasks found.")
+        print("  Send one: coworker request <invite> <skill> --input '{}'")
+        return
+
+    # Expire check
+    queue.cleanup_expired()
+    tasks = queue.list_tasks(state=state_filter, limit=30)
+
+    print()
+    for t in tasks:
+        state = t.state
+        if state == "succeeded":
+            marker = "✓"
+            color = ""
+        elif state == "failed":
+            marker = "✗"
+            color = ""
+        elif state == "expired":
+            marker = "⏰"
+            color = ""
+        else:
+            marker = "…"
+            color = ""
+
+        print(f"  {marker} {t.task_id[:8]}  {t.skill:<16s}  → {t.peer_name:<16s}  {state}")
+
+    active = sum(1 for t in tasks if t.state in ACTIVE_STATES)
+    done = sum(1 for t in tasks if t.state == "succeeded")
+    print(f"\n  {len(tasks)} tasks ({active} pending, {done} completed)")
+
+
+def cmd_result(args):
+    """Get result of an async task."""
+    from agent_coworker._internal.task_queue import AsyncTaskQueue
+
+    queue = AsyncTaskQueue(str(COWORKER_DIR))
+    task_id = args.task_id
+
+    # Support short IDs (prefix match)
+    if len(task_id) < 32:
+        tasks = queue.list_tasks(limit=500)
+        matches = [t for t in tasks if t.task_id.startswith(task_id)]
+        if len(matches) == 0:
+            print(f"  ✗ No task matching '{task_id}'")
+            return
+        if len(matches) > 1:
+            print(f"  ✗ Ambiguous ID '{task_id}', matches {len(matches)} tasks:")
+            for m in matches[:5]:
+                print(f"    {m.task_id[:12]} ({m.skill})")
+            return
+        task_id = matches[0].task_id
+
+    task = queue.load(task_id)
+    if task is None:
+        print(f"  ✗ Task not found: {task_id}")
+        return
+
+    print(f"\n  Task:    {task.task_id[:8]}...")
+    print(f"  Skill:   {task.skill}")
+    print(f"  Peer:    {task.peer_name}")
+    print(f"  State:   {task.state}")
+    print(f"  Created: {task.created_at}")
+
+    if task.state == "succeeded" and task.result:
+        if args.json:
+            print(json.dumps(task.result, ensure_ascii=False, indent=2))
+        else:
+            print(f"\n  Result:")
+            print(f"  {json.dumps(task.result, ensure_ascii=False, indent=2)}")
+    elif task.error:
+        print(f"\n  Error: {task.error}")
+    elif task.state in ("queued", "accepted", "running"):
+        print(f"\n  Status: waiting for peer to process...")
+        if not args.json:
+            print(f"  Polling for response (30s)...")
+            # Auto-poll: start a temporary agent to receive responses
+            import threading
+            try:
+                from agent_coworker.agent import Agent
+                agent = Agent("cli-poll", data_dir=str(COWORKER_DIR))
+                agent._running = True
+                poll = threading.Thread(target=agent._poll_loop, daemon=True)
+                poll.start()
+                for _ in range(15):
+                    time.sleep(2)
+                    task = queue.load(task_id)
+                    if task and task.state in ("succeeded", "failed", "expired"):
+                        break
+                agent._running = False
+                # Re-display result if completed
+                if task and task.state == "succeeded" and task.result:
+                    print(f"\n  ✓ Completed!")
+                    print(f"  {json.dumps(task.result, ensure_ascii=False, indent=2)}")
+                elif task and task.state == "failed":
+                    print(f"\n  ✗ Failed: {task.error}")
+                else:
+                    print(f"\n  Still pending. Run 'coworker result {task_id[:8]}' again later.")
+            except Exception as e:
+                print(f"\n  Could not poll: {e}")
+                print(f"  Run 'coworker result {task_id[:8]}' again later.")
+
+
+def _resolve_target(target: str) -> str:
+    """Resolve invite code or raw address to inbox/wallet address."""
+    if target.startswith("eyJ"):
+        data = json.loads(base64.b64decode(target))
+        return data.get("i", data.get("wallet", target))
+    return target
+
+
 def cmd_version(args):
     """Print version."""
     print(f"agent-coworker {VERSION}")
@@ -950,6 +1102,38 @@ examples:
                                    help="Peer trust tier: untrusted/known/internal/privileged or 0-3")
     skills_sub.add_parser("reset", help="Reset visibility config")
 
+    # request (async)
+    p_request = sub.add_parser("request",
+        help="Send an async task request (peer can be offline)",
+        description="""Send a task request to a peer agent. Unlike 'call', this returns
+immediately — the request is queued via XMTP. When the peer comes
+online, their agent processes it and the result is stored locally.
+
+examples:
+  coworker request eyJu... translate --input '{"text":"hello","lang":"zh"}'
+  coworker request eyJu... analyze --input '{"data":"quarterly report"}'
+
+Check results:
+  coworker tasks              List all async tasks
+  coworker result <task-id>   Get result of a specific task""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_request.add_argument("target", help="Invite code (base64) or inbox ID")
+    p_request.add_argument("skill", help="Skill name to call")
+    p_request.add_argument("--input", default="{}", help="JSON input (default: {})")
+
+    # tasks
+    p_tasks = sub.add_parser("tasks",
+        help="List async task requests and their status",
+        description="Show all async tasks: pending, completed, failed, expired.")
+    p_tasks.add_argument("--state", default=None, help="Filter by state: queued/succeeded/failed/expired")
+
+    # result
+    p_result = sub.add_parser("result",
+        help="Get result of an async task",
+        description="Get the result of a completed async task by task ID (supports short IDs).")
+    p_result.add_argument("task_id", help="Task ID (full or prefix)")
+    p_result.add_argument("--json", action="store_true", help="Output raw JSON only")
+
     # demo
     sub.add_parser("demo",
         help="Connect to the demo bot and test skills",
@@ -980,6 +1164,9 @@ Requires: coworker init + coworker bridge start""",
         "bridge": cmd_bridge,
         "invite": cmd_invite,
         "connect": cmd_connect,
+        "request": cmd_request,
+        "tasks": cmd_tasks,
+        "result": cmd_result,
         "trust": cmd_trust,
         "skills": cmd_skills,
         "demo": cmd_demo,
