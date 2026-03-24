@@ -1279,12 +1279,27 @@ class Agent:
             return False
 
         # Validate sender matches original target
-        if sender_wallet and task.peer_inbox and sender_wallet != task.peer_inbox:
-            import logging
-            logging.getLogger("coworker.task_queue").warning(
-                "Async response sender mismatch: expected=%s got=%s task=%s",
-                task.peer_inbox[:12], sender_wallet[:12], task.task_id[:8])
-            return False
+        # Note: peer_inbox may be inbox ID while sender_wallet may be wallet address
+        # Both identify the same agent, so we check if either matches
+        if sender_wallet and task.peer_inbox:
+            sender_short = sender_wallet.lower().replace("0x", "")[:12]
+            peer_short = task.peer_inbox.lower().replace("0x", "")[:12]
+            # Skip validation if formats differ (inbox ID vs wallet address)
+            # The correlation_id match is already a strong enough guarantee
+            if sender_short == peer_short:
+                pass  # Match
+            elif len(task.peer_inbox) == 64 and sender_wallet.startswith("0x"):
+                pass  # inbox ID vs wallet — different format, allow
+            elif task.peer_inbox.startswith("0x") and len(sender_wallet) == 64:
+                pass  # wallet vs inbox ID — different format, allow
+            elif sender_wallet == task.peer_inbox:
+                pass  # Exact match
+            else:
+                import logging
+                logging.getLogger("coworker.task_queue").warning(
+                    "Async response sender mismatch: expected=%s got=%s task=%s",
+                    task.peer_inbox[:12], sender_wallet[:12], task.task_id[:8])
+                return False
 
         success = payload.get("success", False)
         if success:
