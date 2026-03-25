@@ -654,6 +654,7 @@ class Agent:
             payload = msg.get("payload", {})
             skill_name = payload.get("skill", "")
             input_data = payload.get("input", {})
+            skill_version = payload.get("skill_version")  # optional version pin
             task_id = _uid()
 
             # Check visibility: hidden skills return unknown_skill (no existence leak)
@@ -695,7 +696,8 @@ class Agent:
                 skill=skill_name, delivery_status="received")
 
             start_t = time.time()
-            result = self.executor.execute(skill_name, input_data)
+            result = self.executor.execute(skill_name, input_data,
+                                           skill_version=skill_version)
             duration = (time.time() - start_t) * 1000
 
             success = result.get("success", False)
@@ -823,6 +825,7 @@ class Agent:
 
             skill_name = payload.get("skill", "")
             input_data = payload.get("input", {})
+            skill_version = payload.get("skill_version")  # optional version pin
             requester_wallet = payload.get("requester_wallet", sender_wallet)
             task_id = _uid()
 
@@ -865,7 +868,8 @@ class Agent:
 
             print(f"  ← group_task_request: {skill_name} from {sender_wallet[:12]}...")
             start_t = time.time()
-            result = self.executor.execute(skill_name, input_data)
+            result = self.executor.execute(skill_name, input_data,
+                                           skill_version=skill_version)
             duration = (time.time() - start_t) * 1000
             success = result.get("success", False)
             resp_type = "group_task_response" if success else "group_task_error"
@@ -1089,11 +1093,14 @@ class Agent:
         return {"error": "timeout", "wallet": wallet_address}
 
     def call(self, wallet_address: str, skill_name: str, input_data: dict,
-             timeout: float = 30.0, retries: int = 1) -> dict:
+             timeout: float = 30.0, retries: int = 1,
+             version: str = None) -> dict:
         """Call a skill on a remote agent via XMTP.
 
-        If the first attempt times out, retries up to `retries` times.
-        XMTP dev network can have 2-30s propagation delay.
+        Args:
+            version: Optional skill version to pin. If provided, the remote
+                    agent will check for an exact match and return
+                    VERSION_MISMATCH if the skill version differs.
         """
         task_id = _uid()
         last_error = ""
@@ -1103,9 +1110,11 @@ class Agent:
             if attempt > 1:
                 print(f"    (retry {attempt}/{retries})")
 
-            self.client.send(wallet_address, "task_request", {
-                "skill": skill_name, "input": input_data,
-            }, correlation_id=corr_id)
+            payload = {"skill": skill_name, "input": input_data}
+            if version is not None:
+                payload["skill_version"] = version
+            self.client.send(wallet_address, "task_request", payload,
+                           correlation_id=corr_id)
             # Record outbound task_request
             _peer = wallet_address[:12] + "..."
             _collab = getattr(self, '_current_collab_id', "")

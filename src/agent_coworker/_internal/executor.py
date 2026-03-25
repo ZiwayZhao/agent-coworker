@@ -17,6 +17,7 @@ class SkillDefinition:
         self, name: str, func: Callable, description: str = "",
         input_schema: dict = None, output_schema: dict = None,
         min_trust_tier: int = 1, max_context_privacy_tier: str = "L1_PUBLIC",
+        version: str = None,
     ):
         self.name = name
         self.func = func
@@ -25,9 +26,10 @@ class SkillDefinition:
         self.output_schema = output_schema or {}
         self.min_trust_tier = min_trust_tier
         self.max_context_privacy_tier = max_context_privacy_tier
+        self.version = version  # semver string, e.g. "1.2.0". None = unversioned.
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "description": self.description,
             "input_schema": self.input_schema,
@@ -35,6 +37,9 @@ class SkillDefinition:
             "min_trust_tier": self.min_trust_tier,
             "max_context_privacy_tier": self.max_context_privacy_tier,
         }
+        if self.version is not None:
+            d["version"] = self.version
+        return d
 
 
 class TaskExecutor:
@@ -47,15 +52,21 @@ class TaskExecutor:
     def skill(
         self, name: str, description: str = "", input_schema: dict = None,
         output_schema: dict = None, min_trust_tier: int = 1,
-        max_context_privacy_tier: str = "L1_PUBLIC",
+        max_context_privacy_tier: str = "L1_PUBLIC", version: str = None,
     ):
-        """Decorator to register a skill function."""
+        """Decorator to register a skill function.
+
+        Args:
+            version: Optional semver string (e.g. "1.2.0"). Callers can pin
+                    to a specific version. If None, skill is unversioned.
+        """
         def decorator(func):
             skill_def = SkillDefinition(
                 name=name, func=func, description=description,
                 input_schema=input_schema, output_schema=output_schema,
                 min_trust_tier=min_trust_tier,
                 max_context_privacy_tier=max_context_privacy_tier,
+                version=version,
             )
             self._skills[name] = skill_def
             return func
@@ -65,6 +76,7 @@ class TaskExecutor:
         self, name: str, func: Callable, description: str = "",
         input_schema: dict = None, output_schema: dict = None,
         min_trust_tier: int = 1, max_context_privacy_tier: str = "L1_PUBLIC",
+        version: str = None,
     ):
         """Register a skill function (non-decorator version)."""
         skill_def = SkillDefinition(
@@ -72,11 +84,18 @@ class TaskExecutor:
             input_schema=input_schema, output_schema=output_schema,
             min_trust_tier=min_trust_tier,
             max_context_privacy_tier=max_context_privacy_tier,
+            version=version,
         )
         self._skills[name] = skill_def
 
-    def execute(self, skill_name: str, input_data: Any) -> dict:
-        """Execute a skill with given input."""
+    def execute(self, skill_name: str, input_data: Any,
+                skill_version: str = None) -> dict:
+        """Execute a skill with given input.
+
+        Args:
+            skill_version: If provided, must match the skill's declared version
+                          exactly. Returns VERSION_MISMATCH error if not.
+        """
         self._stats["executed"] += 1
         skill_def = self._skills.get(skill_name)
         if not skill_def:
@@ -85,6 +104,22 @@ class TaskExecutor:
                 "success": False,
                 "error": f"Unknown skill: {skill_name}",
             }
+
+        # Version matching (only when caller specifies a version)
+        # Note: this runs AFTER visibility+trust checks in agent.py,
+        # so the caller already knows the skill exists from discover.
+        # It's safe to return version info here.
+        if skill_version is not None and skill_def.version is not None:
+            if skill_version != skill_def.version:
+                self._stats["failed"] += 1
+                return {
+                    "success": False,
+                    "error": f"Version mismatch: requested {skill_version}, "
+                             f"available {skill_def.version}",
+                    "error_code": "VERSION_MISMATCH",
+                    "available_version": skill_def.version,
+                    "requested_version": skill_version,
+                }
 
         start = time.time()
         try:

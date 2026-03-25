@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 # ── Demo bot (always online for new users to test) ────
 DEMO_BOT_NAME = "icy"
