@@ -43,7 +43,7 @@ from agent_coworker import Agent
 AGENT_NAME = os.getenv("FIN_AGENT_NAME", "fin-agent")
 DATA_DIR = os.getenv("FIN_DATA_DIR", os.path.expanduser("~/.coworker"))
 CACHE_DIR = os.getenv("FIN_CACHE_DIR", "/tmp/fin-agent-cache")
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 SCHEMA_VERSION = "fin-agent.signal.v2"
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -641,6 +641,26 @@ def _call_deepseek(system: str, user: str, max_tokens: int = 2000) -> str:
         return f"[LLM error: {str(e)[:100]}]"
 
 
+def _llm_enhance(data_summary: str, rules_subset: list, task: str, max_tokens: int = 600) -> str:
+    """Lightweight LLM call for enhancing individual skill outputs.
+
+    Uses a shorter system prompt focused on the specific task,
+    with only 1-3 relevant rules for minimal token cost.
+    """
+    rules_text = "\n".join([
+        f"- {r['rule_id']}: {r['topic']}：{r['content'][:150]}"
+        for r in rules_subset[:3]
+    ])
+
+    system = (
+        "你是量价分析研究助手。严格依据给定的教材规则分析，不使用自己的常识。"
+        "只输出技术特征描述，不给投资建议。简洁有力，2-4句话。"
+    )
+    user = f"任务：{task}\n\n数据：\n{data_summary}\n\n相关规则：\n{rules_text}"
+
+    return _call_deepseek(system, user, max_tokens=max_tokens)
+
+
 def _build_llm_analysis(sym: str, rt: dict, df, mdf,
                          ma60_r: dict, vol_r: dict, ge_r: dict,
                          alignment: str) -> str:
@@ -748,9 +768,20 @@ def stock_info(symbol: str) -> dict:
     version="1.0.0",
 )
 def ma60_position(symbol: str) -> dict:
-    df = _get_daily_kline(symbol)
+    sym = _normalize_symbol(symbol)
+    df = _get_daily_kline(sym)
+    rt = _get_realtime_one(sym)
     result = _analyze_ma60(df)
-    result["symbol"] = _normalize_symbol(symbol)
+    result["symbol"] = sym
+
+    # LLM enhancement
+    if DEEPSEEK_API_KEY and _RULES_DB:
+        rules = [r for r in _RULES_DB if r["rule_id"] in ["PATTERN_01", "PHASE_03", "PHASE_07"]]
+        data = (f"{rt['name']}({sym}) 价格{rt['latest_price']}，"
+                f"60均线{result['ma60']:.2f}，位置{result['position']}（{result['distance_pct']:+.1f}%），"
+                f"MA60方向{result['ma60_trend']}，斜率{result['ma60_slope_pct_20d']:.2f}%/20日")
+        enhanced = _llm_enhance(data, rules, "分析该股与60日均线的位置关系，判断中期趋势强弱")
+        result["analysis_text"] = enhanced
     result["disclaimer"] = DISCLAIMER
     return result
 
@@ -764,9 +795,21 @@ def ma60_position(symbol: str) -> dict:
     version="1.0.0",
 )
 def volume_analysis(symbol: str) -> dict:
-    df = _get_daily_kline(symbol)
+    sym = _normalize_symbol(symbol)
+    df = _get_daily_kline(sym)
+    rt = _get_realtime_one(sym)
     result = _analyze_volume_price(df)
-    result["symbol"] = _normalize_symbol(symbol)
+    result["symbol"] = sym
+
+    # LLM enhancement
+    if DEEPSEEK_API_KEY and _RULES_DB:
+        triggered = [r["label"] for r in result.get("rules_triggered", [])]
+        rules = [r for r in _RULES_DB if r["rule_id"].startswith("VPA_")][:4]
+        data = (f"{rt['name']}({sym}) 量价特征：{result['pattern']}，"
+                f"量比={result['vol_ratio']}，价变={result['price_change_pct']:+.1f}%，"
+                f"触发规则：{triggered if triggered else '无'}")
+        enhanced = _llm_enhance(data, rules, "用九条量价口诀解释当前量价关系的含义和后续可能")
+        result["description"] = enhanced
     result["disclaimer"] = DISCLAIMER
     return result
 
@@ -780,9 +823,20 @@ def volume_analysis(symbol: str) -> dict:
     version="1.0.0",
 )
 def golden_eye(symbol: str) -> dict:
-    mdf = _get_monthly_kline(symbol)
+    sym = _normalize_symbol(symbol)
+    mdf = _get_monthly_kline(sym)
+    rt = _get_realtime_one(sym)
     result = _analyze_golden_eye(mdf)
-    result["symbol"] = _normalize_symbol(symbol)
+    result["symbol"] = sym
+
+    # LLM enhancement
+    if DEEPSEEK_API_KEY and _RULES_DB:
+        rules = [r for r in _RULES_DB if r["rule_id"] in ["BUY_05"]]
+        data = (f"{rt['name']}({sym}) 月线：MA5={result.get('ma5_monthly',0):.0f}，"
+                f"MA10={result.get('ma10_monthly',0):.0f}，MA20={result.get('ma20_monthly',0):.0f}，"
+                f"黄金眼状态={result['stage']}")
+        enhanced = _llm_enhance(data, rules, "分析月线黄金眼形态的当前状态和中长期趋势含义")
+        result["analysis_text"] = enhanced
     result["disclaimer"] = DISCLAIMER
     return result
 
@@ -823,15 +877,25 @@ def market_state(symbol: str) -> dict:
         alignment = "neutral"
         alignment_text = "震荡格局"
 
-    # Build summary
+    # Build summary — LLM enhanced if available
     name = rt["name"]
-    summary_parts = [
-        f"{name}({sym})",
-        ma60_result["analysis_text"],
-        f"量价关系：{vol_result['description']}。",
-        f"均线排列：{alignment_text}。",
-        ge_result["analysis_text"],
-    ]
+    if DEEPSEEK_API_KEY and _RULES_DB:
+        rules = _select_relevant_rules(ma60_result, vol_result, ge_result)[:4]
+        data = (f"{name}({sym}) 价格{rt['latest_price']}(涨跌{rt['change_pct']}%)，"
+                f"MA60位置={ma60_result['position']}({ma60_result['distance_pct']:+.1f}%)，"
+                f"MA60方向={ma60_result['ma60_trend']}，量价={vol_result['pattern']}(量比{vol_result['vol_ratio']})，"
+                f"均线排列={alignment_text}，月线黄金眼={ge_result['stage']}")
+        summary_text = _llm_enhance(data, rules,
+            "综合所有数据，给出3-5句话的市场状态总结，包括阶段判断和关键观察点", max_tokens=800)
+    else:
+        summary_parts = [
+            f"{name}({sym})",
+            ma60_result["analysis_text"],
+            f"量价关系：{vol_result['description']}。",
+            f"均线排列：{alignment_text}。",
+            ge_result["analysis_text"],
+        ]
+        summary_text = " ".join(summary_parts)
 
     # Risk factors
     risks = []
@@ -849,7 +913,7 @@ def market_state(symbol: str) -> dict:
     return {
         "symbol": sym,
         "name": name,
-        "summary": " ".join(summary_parts),
+        "summary": summary_text,
         "metrics": {
             "price": rt["latest_price"],
             "change_pct": rt["change_pct"],
