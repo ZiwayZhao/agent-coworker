@@ -43,7 +43,8 @@ from agent_coworker import Agent
 AGENT_NAME = os.getenv("FIN_AGENT_NAME", "fin-agent")
 DATA_DIR = os.getenv("FIN_DATA_DIR", os.path.expanduser("~/.coworker"))
 CACHE_DIR = os.getenv("FIN_CACHE_DIR", "/tmp/fin-agent-cache")
-VERSION = "0.1.0"
+VERSION = "0.2.0"
+SCHEMA_VERSION = "fin-agent.signal.v1"
 
 DISCLAIMER = (
     "Technical feature analysis only. Not investment advice. "
@@ -384,6 +385,155 @@ def _analyze_golden_eye(mdf: pd.DataFrame) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
+# Signal Scoring Engine (PRIVATE — core know-how)
+# ═══════════════════════════════════════════════════════════
+
+def _compute_decision_signal(ma60_r: dict, vol_r: dict, ge_r: dict, alignment: str) -> dict:
+    """Compute machine-readable decision signal from component analyses.
+
+    This is the core proprietary logic — scoring weights and thresholds
+    are our know-how, never transmitted to callers.
+    """
+    # Component scores (0-1)
+    # Trend score: MA60 position + trend direction
+    trend_score = 0.5
+    if ma60_r["position"] == "above" and ma60_r["ma60_trend"] == "up":
+        trend_score = 0.9
+    elif ma60_r["position"] == "above" and ma60_r["ma60_trend"] == "flat":
+        trend_score = 0.7
+    elif ma60_r["position"] == "touching":
+        trend_score = 0.5
+    elif ma60_r["position"] == "below" and ma60_r["ma60_trend"] == "flat":
+        trend_score = 0.35
+    elif ma60_r["position"] == "below" and ma60_r["ma60_trend"] == "down":
+        trend_score = 0.15
+
+    # Volume-price score
+    vp_score = 0.5
+    vol_ratio = vol_r.get("vol_ratio", 1.0)
+    price_chg = vol_r.get("price_change_pct", 0)
+    rules = [r["rule"] for r in vol_r.get("rules_triggered", [])]
+    if "vol_up_price_up" in rules:
+        vp_score = 0.85
+    elif "high_shrink" in rules:
+        vp_score = 0.75
+    elif "low_expand" in rules:
+        vp_score = 0.7
+    elif "high_expand" in rules:
+        vp_score = 0.3
+    elif price_chg > 0 and vol_ratio < 0.8:
+        vp_score = 0.6  # shrink up — mild positive
+
+    # Structure score (MA alignment)
+    structure_score = {"bullish": 0.9, "neutral": 0.5, "bearish": 0.15}.get(alignment, 0.5)
+
+    # Monthly score (golden eye)
+    monthly_score = 0.5
+    stage = ge_r.get("stage", "not_formed")
+    if stage == "formed":
+        monthly_score = 0.9
+    elif stage == "forming":
+        monthly_score = 0.7
+    elif stage == "death_cross":
+        monthly_score = 0.15
+
+    # Weighted composite
+    weights = {"trend": 0.30, "vp": 0.25, "structure": 0.25, "monthly": 0.20}
+    composite = (
+        trend_score * weights["trend"] +
+        vp_score * weights["vp"] +
+        structure_score * weights["structure"] +
+        monthly_score * weights["monthly"]
+    )
+
+    # Signal classification
+    if composite >= 0.72:
+        signal, action_bias = "bullish", "accumulate"
+    elif composite >= 0.58:
+        signal, action_bias = "bullish", "observe"
+    elif composite >= 0.42:
+        signal, action_bias = "neutral", "hold"
+    elif composite >= 0.28:
+        signal, action_bias = "bearish", "reduce"
+    else:
+        signal, action_bias = "bearish", "avoid"
+
+    # Signal strength (how decisive the signal is)
+    signal_strength = abs(composite - 0.5) * 2  # 0-1, higher = more decisive
+
+    # Risk level
+    risk_level = "low" if composite > 0.65 else "high" if composite < 0.35 else "medium"
+
+    # Confidence (data quality + signal clarity)
+    confidence = min(0.95, 0.5 + signal_strength * 0.4 + (0.1 if stage != "insufficient_data" else 0))
+
+    return {
+        "signal": signal,
+        "action_bias": action_bias,
+        "confidence_score": round(confidence, 2),
+        "signal_strength": round(signal_strength, 2),
+        "risk_level": risk_level,
+        "time_horizon": "swing_10_30d",
+        "composite_score": round(composite, 2),
+        "component_scores": {
+            "trend_score": round(trend_score, 2),
+            "volume_price_score": round(vp_score, 2),
+            "structure_score": round(structure_score, 2),
+            "monthly_score": round(monthly_score, 2),
+        },
+    }
+
+
+def _build_factor_breakdown(ma60_r: dict, vol_r: dict, ge_r: dict, alignment: str) -> dict:
+    """Build explainable factor breakdown for LLM consumption."""
+    bullish, bearish = [], []
+
+    if ma60_r["position"] == "above":
+        bullish.append({"code": "above_ma60", "label": "站上60日均线", "weight": 0.2})
+    elif ma60_r["position"] == "below":
+        bearish.append({"code": "below_ma60", "label": "跌破60日均线", "weight": 0.2})
+
+    if ma60_r["ma60_trend"] == "up":
+        bullish.append({"code": "ma60_up", "label": "60均线方向向上", "weight": 0.15})
+    elif ma60_r["ma60_trend"] == "down":
+        bearish.append({"code": "ma60_down", "label": "60均线方向向下", "weight": 0.15})
+
+    for r in vol_r.get("rules_triggered", []):
+        entry = {"code": r["rule"], "label": r["label"], "weight": 0.12}
+        if r["rule"] in ("vol_up_price_up", "high_shrink", "low_expand"):
+            bullish.append(entry)
+        elif r["rule"] in ("high_expand",):
+            bearish.append(entry)
+
+    if alignment == "bullish":
+        bullish.append({"code": "ma_bullish", "label": "均线多头排列", "weight": 0.15})
+    elif alignment == "bearish":
+        bearish.append({"code": "ma_bearish", "label": "均线空头排列", "weight": 0.15})
+
+    if ge_r.get("golden_eye"):
+        bullish.append({"code": "golden_eye", "label": "月线黄金眼形成", "weight": 0.1})
+    elif ge_r.get("stage") == "death_cross":
+        bearish.append({"code": "death_cross", "label": "月线死叉", "weight": 0.1})
+
+    return {"bullish": bullish, "bearish": bearish}
+
+
+def _build_machine_flags(ma60_r: dict, vol_r: dict, ge_r: dict, alignment: str) -> list:
+    """Build flat list of boolean flags for quick machine filtering."""
+    flags = []
+    flags.append(f"ma60_{ma60_r['position']}")
+    flags.append(f"ma60_trend_{ma60_r['ma60_trend']}")
+    flags.append(f"alignment_{alignment}")
+    if ge_r.get("golden_eye"):
+        flags.append("golden_eye_formed")
+    if ge_r.get("stage") == "death_cross":
+        flags.append("death_cross")
+    for r in vol_r.get("rules_triggered", []):
+        flags.append(f"vol_{r['rule']}")
+    return flags
+
+
+# ═══════════════════════════════════════════════════════════
 # Agent + Skills
 # ═══════════════════════════════════════════════════════════
 
@@ -563,14 +713,171 @@ def market_state(symbol: str) -> dict:
     }
 
 
+@agent.skill(
+    "decision_snapshot",
+    description="Full pre-trade analysis snapshot for one stock. Returns machine-readable signal + factor breakdown. "
+                "Recommended default entry point for AI agent integration. "
+                "单票完整决策快照，推荐作为其他 Agent 的默认调用入口。",
+    input_schema={"symbol": "str"},
+    output_schema={"decision_signal": "dict", "factor_breakdown": "dict",
+                   "machine_flags": "list", "raw_metrics": "dict", "summary": "str"},
+    min_trust_tier=1,
+    version="1.0.0",
+)
+def decision_snapshot(symbol: str) -> dict:
+    sym = _normalize_symbol(symbol)
+    rt = _get_realtime_one(sym)
+    df = _get_daily_kline(sym)
+    mdf = _get_monthly_kline(sym)
+    now = datetime.now(timezone(timedelta(hours=8)))
+
+    ma60_r = _analyze_ma60(df)
+    vol_r = _analyze_volume_price(df)
+    ge_r = _analyze_golden_eye(mdf)
+
+    latest = df.iloc[-1]
+    ma5 = float(latest['MA5']) if pd.notna(latest['MA5']) else 0
+    ma10 = float(latest['MA10']) if pd.notna(latest['MA10']) else 0
+    ma20 = float(latest['MA20']) if pd.notna(latest['MA20']) else 0
+    ma60 = float(latest['MA60']) if pd.notna(latest['MA60']) else 0
+    alignment = "bullish" if ma5 > ma10 > ma20 > ma60 else \
+                "bearish" if ma5 < ma10 < ma20 < ma60 else "neutral"
+
+    signal = _compute_decision_signal(ma60_r, vol_r, ge_r, alignment)
+    factors = _build_factor_breakdown(ma60_r, vol_r, ge_r, alignment)
+    flags = _build_machine_flags(ma60_r, vol_r, ge_r, alignment)
+
+    # Human summary
+    name = rt["name"]
+    parts = [f"{name}({sym})", ma60_r["analysis_text"],
+             f"量价：{vol_r['description']}。", ge_r["analysis_text"]]
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "skill": "decision_snapshot",
+        "asset": {"market": "CN-A", "symbol": sym, "name": name},
+        "decision_signal": signal,
+        "factor_breakdown": factors,
+        "machine_flags": flags,
+        "raw_metrics": {
+            "latest_price": rt["latest_price"],
+            "change_pct": rt["change_pct"],
+            "volume": rt["volume"],
+            "ma60": ma60_r["ma60"],
+            "ma60_position": ma60_r["position"],
+            "ma60_distance_pct": ma60_r["distance_pct"],
+            "ma60_trend": ma60_r["ma60_trend"],
+            "volume_pattern": vol_r["pattern"],
+            "vol_ratio": vol_r["vol_ratio"],
+            "ma_alignment": alignment,
+            "golden_eye": ge_r["golden_eye"],
+            "golden_eye_stage": ge_r["stage"],
+        },
+        "llm_prompt_hint": {
+            "use_as": "one input signal among many, not a final trading decision",
+            "decision_rule": "If confidence_score < 0.55 or data_quality != 'ok', downweight this signal.",
+            "combine_with": "news sentiment, fundamental data, portfolio risk limits",
+        },
+        "data_quality": {"status": "ok", "source": "akshare/eastmoney",
+                         "freshness_seconds": 15 if _is_trading_hours() else 300},
+        "human_view": {"summary": " ".join(parts)},
+        "as_of": now.strftime("%Y-%m-%d %H:%M"),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+@agent.skill(
+    "batch_analyze",
+    description="Batch analysis for multiple stocks. Returns ranked signals for watchlist scanning. "
+                "批量分析多只股票，返回排序后的信号列表，适合盯盘和选股。",
+    input_schema={"symbols": "list"},
+    output_schema={"results": "list", "ranking": "list", "total": "int"},
+    min_trust_tier=1,
+    version="1.0.0",
+)
+def batch_analyze(symbols: list) -> dict:
+    if not isinstance(symbols, list) or len(symbols) == 0:
+        return {"error": "symbols must be a non-empty list", "results": [], "ranking": [], "total": 0}
+    if len(symbols) > 20:
+        return {"error": "max 20 symbols per batch", "results": [], "ranking": [], "total": 0}
+
+    results = []
+    for sym_raw in symbols:
+        try:
+            sym = _normalize_symbol(sym_raw)
+            rt = _get_realtime_one(sym)
+            df = _get_daily_kline(sym)
+            mdf = _get_monthly_kline(sym)
+
+            ma60_r = _analyze_ma60(df)
+            vol_r = _analyze_volume_price(df)
+            ge_r = _analyze_golden_eye(mdf)
+
+            latest = df.iloc[-1]
+            ma5 = float(latest['MA5']) if pd.notna(latest['MA5']) else 0
+            ma10 = float(latest['MA10']) if pd.notna(latest['MA10']) else 0
+            ma20 = float(latest['MA20']) if pd.notna(latest['MA20']) else 0
+            ma60 = float(latest['MA60']) if pd.notna(latest['MA60']) else 0
+            alignment = "bullish" if ma5 > ma10 > ma20 > ma60 else \
+                        "bearish" if ma5 < ma10 < ma20 < ma60 else "neutral"
+
+            signal = _compute_decision_signal(ma60_r, vol_r, ge_r, alignment)
+
+            results.append({
+                "symbol": sym,
+                "name": rt["name"],
+                "signal": signal["signal"],
+                "action_bias": signal["action_bias"],
+                "confidence_score": signal["confidence_score"],
+                "signal_strength": signal["signal_strength"],
+                "composite_score": signal["composite_score"],
+                "risk_level": signal["risk_level"],
+                "price": rt["latest_price"],
+                "change_pct": rt["change_pct"],
+                "ma60_position": ma60_r["position"],
+                "volume_pattern": vol_r["pattern"],
+                "golden_eye": ge_r["golden_eye"],
+            })
+        except Exception as e:
+            results.append({
+                "symbol": sym_raw,
+                "name": None,
+                "signal": "invalid",
+                "error": str(e),
+                "composite_score": -1,
+            })
+
+    # Sort by composite score descending
+    valid = [r for r in results if r.get("composite_score", -1) >= 0]
+    valid.sort(key=lambda x: x["composite_score"], reverse=True)
+    ranking = [r["symbol"] for r in valid]
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "skill": "batch_analyze",
+        "results": results,
+        "ranking": ranking,
+        "total": len(results),
+        "valid_count": len(valid),
+        "as_of": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M"),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print(f"  fin-agent v{VERSION}")
-    print(f"  Skills: stock_info, ma60_position, volume_analysis, golden_eye, market_state")
+    print(f"  fin-agent v{VERSION} — A-share Signal API for AI Agents")
+    print(f"  Skills:")
+    print(f"    stock_info         — basic data + MA (tier 0)")
+    print(f"    ma60_position      — 60-day MA analysis (tier 1)")
+    print(f"    volume_analysis    — volume-price patterns (tier 1)")
+    print(f"    golden_eye         — monthly golden eye (tier 1)")
+    print(f"    market_state       — comprehensive analysis (tier 1)")
+    print(f"    decision_snapshot  — full pre-trade signal [recommended] (tier 1)")
+    print(f"    batch_analyze      — multi-stock scanning (tier 1)")
     print(f"  Dashboard: http://localhost:8090")
-    print(f"  Trust: stock_info=tier0 (public), others=tier1 (KNOWN)")
     print()
     agent.serve(expose_skills="all")
