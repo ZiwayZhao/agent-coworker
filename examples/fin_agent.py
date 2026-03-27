@@ -43,14 +43,22 @@ from agent_coworker import Agent
 AGENT_NAME = os.getenv("FIN_AGENT_NAME", "fin-agent")
 DATA_DIR = os.getenv("FIN_DATA_DIR", os.path.expanduser("~/.coworker"))
 CACHE_DIR = os.getenv("FIN_CACHE_DIR", "/tmp/fin-agent-cache")
-VERSION = "0.2.0"
-SCHEMA_VERSION = "fin-agent.signal.v1"
+VERSION = "0.3.0"
+SCHEMA_VERSION = "fin-agent.signal.v2"
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 DISCLAIMER = (
     "Technical feature analysis only. Not investment advice. "
     "Past performance does not indicate future results. "
     "仅为技术特征分析，不构成投资建议。"
 )
+
+# Knowledge base paths
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_KNOWLEDGE_DIR = os.path.join(_SCRIPT_DIR, "fin_knowledge")
 
 # ═══════════════════════════════════════════════════════════
 # Cache Layer
@@ -534,6 +542,156 @@ def _build_machine_flags(ma60_r: dict, vol_r: dict, ge_r: dict, alignment: str) 
 
 
 # ═══════════════════════════════════════════════════════════
+# LLM Analysis Engine (PRIVATE — core know-how)
+# ═══════════════════════════════════════════════════════════
+
+# Load knowledge base at module level
+_SYSTEM_PROMPT = ""
+_RULES_DB: list = []
+try:
+    with open(os.path.join(_KNOWLEDGE_DIR, "system_prompt.md")) as f:
+        _SYSTEM_PROMPT = f.read()
+    with open(os.path.join(_KNOWLEDGE_DIR, "rules.json")) as f:
+        _RULES_DB = json.load(f).get("rules", [])
+except FileNotFoundError:
+    pass  # Will fall back to rule-engine only mode
+
+
+def _select_relevant_rules(ma60_r: dict, vol_r: dict, ge_r: dict) -> list:
+    """Select relevant courseware rules based on current market state (RAG-lite)."""
+    selected_ids = set()
+
+    # Always include core principles
+    selected_ids.update(["PRINCIPLE_01", "PRINCIPLE_02"])
+
+    # MA60 position based
+    if ma60_r["position"] == "above":
+        selected_ids.update(["BUY_01", "BUY_02", "VPA_01", "VPA_06", "VPA_09", "PHASE_03"])
+    elif ma60_r["position"] == "below":
+        selected_ids.update(["BUY_03", "VPA_03", "VPA_04", "PHASE_01", "PHASE_02", "PATTERN_01"])
+    else:
+        selected_ids.update(["BUY_02", "VPA_01", "VPA_06", "PHASE_02", "PHASE_03"])
+
+    # Volume rules triggered
+    for r in vol_r.get("rules_triggered", []):
+        rule_map = {
+            "high_shrink": "VPA_01", "high_expand": "VPA_02",
+            "low_expand": "VPA_04", "vol_up_price_up": "VPA_06",
+        }
+        if r["rule"] in rule_map:
+            selected_ids.add(rule_map[r["rule"]])
+
+    # Golden eye
+    if ge_r.get("stage") in ("formed", "forming"):
+        selected_ids.add("BUY_05")
+    elif ge_r.get("stage") == "death_cross":
+        selected_ids.add("SELL_07")
+
+    # Sell signals if high
+    if ma60_r.get("distance_pct", 0) > 15:
+        selected_ids.update(["SELL_04", "SELL_05", "SELL_06"])
+
+    rules = [r for r in _RULES_DB if r["rule_id"] in selected_ids]
+    return rules[:8]  # Max 8 rules to control token cost
+
+
+def _get_news(symbol: str) -> str:
+    """Fetch recent news for a stock via akshare."""
+    try:
+        import akshare as ak
+        df = ak.stock_news_em(symbol=symbol)
+        if df is not None and len(df) > 0:
+            items = []
+            for _, row in df.head(5).iterrows():
+                title = str(row.get("新闻标题", ""))
+                content = str(row.get("新闻内容", ""))[:200]
+                items.append(f"- {title}: {content}")
+            return "\n".join(items)
+    except Exception:
+        pass
+    return "近期新闻数据暂不可用"
+
+
+def _call_deepseek(system: str, user: str, max_tokens: int = 2000) -> str:
+    """Call DeepSeek API."""
+    import urllib.request
+
+    if not DEEPSEEK_API_KEY:
+        return "[LLM unavailable: DEEPSEEK_API_KEY not set]"
+
+    data = json.dumps({
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }).encode()
+
+    req = urllib.request.Request(DEEPSEEK_URL, data=data, headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+    })
+
+    try:
+        resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        return resp["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"[LLM error: {str(e)[:100]}]"
+
+
+def _build_llm_analysis(sym: str, rt: dict, df, mdf,
+                         ma60_r: dict, vol_r: dict, ge_r: dict,
+                         alignment: str) -> str:
+    """Build full LLM-powered analysis using courseware knowledge."""
+    latest = df.iloc[-1]
+    ma5 = float(latest['MA5']) if pd.notna(latest['MA5']) else 0
+    ma10 = float(latest['MA10']) if pd.notna(latest['MA10']) else 0
+    ma20 = float(latest['MA20']) if pd.notna(latest['MA20']) else 0
+    ma60 = float(latest['MA60']) if pd.notna(latest['MA60']) else 0
+
+    # Build structured data
+    stock_data = (
+        f"## 标的数据\n"
+        f"- 股票：{rt['name']}({sym})\n"
+        f"- 最新价：{rt['latest_price']}\n"
+        f"- 涨跌幅：{rt['change_pct']}%\n"
+        f"- 成交量：{rt['volume']}\n"
+        f"- MA5={ma5:.2f}, MA10={ma10:.2f}, MA20={ma20:.2f}, MA60={ma60:.2f}\n"
+        f"- 均线排列：{alignment}\n"
+        f"- 60均线位置：{ma60_r['position']}（距离{ma60_r['distance_pct']:+.1f}%）\n"
+        f"- 60均线方向：{ma60_r['ma60_trend']}\n"
+        f"- 量价特征：{vol_r['pattern']}（量比={vol_r['vol_ratio']}）\n"
+        f"- 月线黄金眼：{ge_r['stage']}（MA5月={ge_r.get('ma5_monthly',0):.0f}, "
+        f"MA10月={ge_r.get('ma10_monthly',0):.0f}, MA20月={ge_r.get('ma20_monthly',0):.0f}）\n"
+    )
+
+    # Select and format rules
+    rules = _select_relevant_rules(ma60_r, vol_r, ge_r)
+    rules_text = "\n\n".join([
+        f"### {r['rule_id']}: {r['topic']}\n{r['content']}"
+        + (f"\n信号条件：{r['signals']}" if 'signals' in r else "")
+        + (f"\n失效条件：{r['invalidation']}" if 'invalidation' in r else "")
+        for r in rules
+    ])
+
+    # Get news
+    news = _get_news(sym)
+
+    user_msg = (
+        f"请分析以下 A 股标的：\n\n"
+        f"{stock_data}\n\n"
+        f"## 检索到的相关教材规则\n{rules_text}\n\n"
+        f"## 近期新闻\n{news}\n\n"
+        f"请按照输出格式（标的概况→阶段判断→量价特征→形态映射→"
+        f"支撑证据→失效条件→新闻影响→综合评估→风险声明）进行分析。"
+    )
+
+    return _call_deepseek(_SYSTEM_PROMPT, user_msg)
+
+
+# ═══════════════════════════════════════════════════════════
 # Agent + Skills
 # ═══════════════════════════════════════════════════════════
 
@@ -864,11 +1022,74 @@ def batch_analyze(symbols: list) -> dict:
     }
 
 
+@agent.skill(
+    "deep_analysis",
+    description="LLM-powered deep analysis using proprietary courseware methodology. "
+                "Combines real-time data + volume-price rules + news into a comprehensive research report. "
+                "基于私有课件方法论的 LLM 深度分析，输出完整研究报告。"
+                "THIS IS THE KILLER SKILL — the analysis methodology is private and never transmitted.",
+    input_schema={"symbol": "str"},
+    output_schema={"analysis": "str", "signal": "dict", "data_quality": "str"},
+    min_trust_tier=2,
+    version="1.0.0",
+)
+def deep_analysis(symbol: str) -> dict:
+    sym = _normalize_symbol(symbol)
+    rt = _get_realtime_one(sym)
+    df = _get_daily_kline(sym)
+    mdf = _get_monthly_kline(sym)
+    now = datetime.now(timezone(timedelta(hours=8)))
+
+    ma60_r = _analyze_ma60(df)
+    vol_r = _analyze_volume_price(df)
+    ge_r = _analyze_golden_eye(mdf)
+
+    latest = df.iloc[-1]
+    ma5 = float(latest['MA5']) if pd.notna(latest['MA5']) else 0
+    ma10 = float(latest['MA10']) if pd.notna(latest['MA10']) else 0
+    ma20 = float(latest['MA20']) if pd.notna(latest['MA20']) else 0
+    ma60 = float(latest['MA60']) if pd.notna(latest['MA60']) else 0
+    alignment = "bullish" if ma5 > ma10 > ma20 > ma60 else \
+                "bearish" if ma5 < ma10 < ma20 < ma60 else "neutral"
+
+    # Compute rule-engine signal
+    signal = _compute_decision_signal(ma60_r, vol_r, ge_r, alignment)
+
+    # Call LLM with courseware knowledge
+    analysis_text = _build_llm_analysis(
+        sym, rt, df, mdf, ma60_r, vol_r, ge_r, alignment)
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "skill": "deep_analysis",
+        "asset": {"market": "CN-A", "symbol": sym, "name": rt["name"]},
+        "analysis": analysis_text,
+        "decision_signal": signal,
+        "raw_metrics": {
+            "price": rt["latest_price"],
+            "change_pct": rt["change_pct"],
+            "ma60_position": ma60_r["position"],
+            "ma60_distance_pct": ma60_r["distance_pct"],
+            "volume_pattern": vol_r["pattern"],
+            "vol_ratio": vol_r["vol_ratio"],
+            "ma_alignment": alignment,
+            "golden_eye": ge_r["golden_eye"],
+        },
+        "data_quality": "ok",
+        "as_of": now.strftime("%Y-%m-%d %H:%M"),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    if not DEEPSEEK_API_KEY:
+        print("  ⚠ DEEPSEEK_API_KEY not set — deep_analysis skill will be limited")
+        print("  Set it: export DEEPSEEK_API_KEY=sk-xxx")
+        print()
     print(f"  fin-agent v{VERSION} — A-share Signal API for AI Agents")
     print(f"  Skills:")
     print(f"    stock_info         — basic data + MA (tier 0)")
@@ -876,8 +1097,9 @@ if __name__ == "__main__":
     print(f"    volume_analysis    — volume-price patterns (tier 1)")
     print(f"    golden_eye         — monthly golden eye (tier 1)")
     print(f"    market_state       — comprehensive analysis (tier 1)")
-    print(f"    decision_snapshot  — full pre-trade signal [recommended] (tier 1)")
+    print(f"    decision_snapshot  — full pre-trade signal (tier 1)")
     print(f"    batch_analyze      — multi-stock scanning (tier 1)")
+    print(f"    deep_analysis      — LLM research report [KILLER] (tier 2)")
     print(f"  Dashboard: http://localhost:8090")
     print()
     agent.serve(expose_skills="all")
