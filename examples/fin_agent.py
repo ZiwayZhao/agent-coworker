@@ -721,11 +721,13 @@ agent = Agent(AGENT_NAME, data_dir=DATA_DIR)
 @agent.skill(
     "stock_info",
     description="Query A-share stock basic data with moving averages. 查询A股股票基础数据。",
+    when_to_use="When you need basic price, volume, and moving average data for a Chinese A-share stock",
     input_schema={"symbol": "str"},
     output_schema={"symbol": "str", "name": "str", "latest_price": "float",
                    "change_pct": "float", "volume": "int", "ma": "dict"},
     min_trust_tier=0,
     version="1.0.0",
+    category="query",
 )
 def stock_info(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -766,6 +768,8 @@ def stock_info(symbol: str) -> dict:
     output_schema={"position": "str", "distance_pct": "float", "ma60_trend": "str", "analysis_text": "str"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When you need to know if a stock price is above/below its 60-day moving average and the MA60 trend direction",
+    category="compute",
 )
 def ma60_position(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -793,6 +797,8 @@ def ma60_position(symbol: str) -> dict:
     output_schema={"pattern": "str", "vol_ratio": "float", "rules_triggered": "list", "description": "str"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When you need to analyze volume-price relationship patterns for a stock using the 9 volume-price rules",
+    category="compute",
 )
 def volume_analysis(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -821,6 +827,8 @@ def volume_analysis(symbol: str) -> dict:
     output_schema={"golden_eye": "bool", "stage": "str", "analysis_text": "str"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When checking monthly moving average crossover signals (5/10/20 month golden eye formation) for medium-term trend",
+    category="compute",
 )
 def golden_eye(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -848,6 +856,8 @@ def golden_eye(symbol: str) -> dict:
     output_schema={"summary": "str", "metrics": "dict", "risk_factors": "list"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When you need a comprehensive technical summary combining MA60, volume-price, and golden eye for a stock",
+    category="compute",
 )
 def market_state(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -945,6 +955,8 @@ def market_state(symbol: str) -> dict:
                    "machine_flags": "list", "raw_metrics": "dict", "summary": "str"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When another AI agent needs structured technical signals as input for trading decisions",
+    category="query",
 )
 def decision_snapshot(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)
@@ -1016,6 +1028,8 @@ def decision_snapshot(symbol: str) -> dict:
     output_schema={"results": "list", "ranking": "list", "total": "int"},
     min_trust_tier=1,
     version="1.0.0",
+    when_to_use="When you need to screen or compare multiple A-share stocks at once",
+    category="compute",
 )
 def batch_analyze(symbols: list) -> dict:
     if not isinstance(symbols, list) or len(symbols) == 0:
@@ -1096,6 +1110,8 @@ def batch_analyze(symbols: list) -> dict:
     output_schema={"analysis": "str", "signal": "dict", "data_quality": "str"},
     min_trust_tier=2,
     version="1.0.0",
+    when_to_use="When you need an in-depth LLM-powered research report for a stock using proprietary methodology and knowledge base",
+    category="compute",
 )
 def deep_analysis(symbol: str) -> dict:
     sym = _normalize_symbol(symbol)

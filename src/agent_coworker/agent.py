@@ -607,7 +607,35 @@ class Agent:
 
         # ── Route by message type ──
 
-        if msg_type == "discover":
+        if msg_type == "agent_card_query":
+            # Fast path: return AgentCard (replaces full discover for repeat connections)
+            from ._internal.skill_manifest import AgentCard as AgentCardClass
+            peer_tier = self.trust_manager.get_trust_tier(sender_wallet)
+            visible_skills = self.executor.list_skills_for_tier(peer_tier, exposed_set=self._exposed_set)
+            skill_summaries = []
+            for s in visible_skills:
+                summary = {"name": s["name"], "schema_hash": ""}
+                if s.get("version"):
+                    summary["version"] = s["version"]
+                if s.get("when_to_use"):
+                    summary["when_to_use"] = s["when_to_use"]
+                # Compute schema hash for cache invalidation
+                import hashlib, json as _json
+                hash_payload = _json.dumps({"name": s["name"], "version": s.get("version", ""),
+                    "input_schema": s.get("input_schema", {}), "output_schema": s.get("output_schema", {}),
+                    "min_trust_tier": s.get("min_trust_tier", 1)}, sort_keys=True)
+                summary["schema_hash"] = hashlib.sha256(hash_payload.encode()).hexdigest()[:16]
+                skill_summaries.append(summary)
+            card = AgentCardClass(
+                agent_id=self.name, display_name=self.name,
+                wallet=self.wallet, inbox_id=getattr(self, '_inbox_id', ''),
+                skills=skill_summaries, trust_tier=peer_tier,
+            )
+            self.client.send(sender_wallet, "agent_card_response", card.to_dict(),
+                           correlation_id=correlation_id)
+            print(f"  ← agent_card_query from {sender_wallet[:12]}... → sent card ({len(skill_summaries)} skills)")
+
+        elif msg_type == "discover":
             # Return only skills visible at sender's trust tier
             peer_tier = self.trust_manager.get_trust_tier(sender_wallet)
             visible_skills = self.executor.list_skills_for_tier(peer_tier, exposed_set=self._exposed_set)
@@ -992,11 +1020,51 @@ class Agent:
     # ── Remote Operations ────────────────────────────────────
 
     def connect(self, wallet_address: str, retries: int = 3) -> dict:
-        """Connect to a peer via XMTP. Sends discover, waits for capabilities.
+        """Connect to a peer via XMTP. Uses AgentCard cache for fast reconnect.
 
-        Retries up to `retries` times if the first attempt times out, because
-        XMTP network propagation can be unpredictable (20-40s on dev for first DM).
+        Flow:
+        1. Check local AgentCard cache → if valid, return immediately (2s)
+        2. Otherwise, send discover + trust handshake (30-60s first time)
+
+        Retries up to `retries` times if the first attempt times out.
         """
+        # ── Fast path: check AgentCard cache ──
+        peers = self._load_peers()
+        for name, data in peers.items():
+            if data.get("wallet") == wallet_address or data.get("inbox_id") == wallet_address:
+                card_hash = data.get("card_hash", "")
+                if card_hash and data.get("skills"):
+                    # We have a cached card — try agent_card_query to verify it's still valid
+                    corr_id = _uid()
+                    try:
+                        self.client.send(wallet_address, "agent_card_query", {
+                            "name": self.name, "cached_hash": card_hash,
+                        }, correlation_id=corr_id)
+                        for _ in range(5):  # 5s timeout for card query
+                            time.sleep(1)
+                            if corr_id in self._response_box:
+                                resp = self._response_box.pop(corr_id)
+                                payload = resp.get("payload", {})
+                                new_hash = payload.get("card_hash", "")
+                                if new_hash == card_hash:
+                                    # Cache hit — card unchanged
+                                    print(f"  ✓ AgentCard cache hit for {name} (hash={card_hash[:8]})")
+                                    return data
+                                else:
+                                    # Card changed — update cache
+                                    new_skills = payload.get("skills", [])
+                                    data["skills"] = new_skills
+                                    data["card_hash"] = new_hash
+                                    data["connected_at"] = _now_iso()
+                                    peers[name] = data
+                                    self._save_peers(peers)
+                                    skill_names = [s.get("name", s) if isinstance(s, dict) else s for s in new_skills]
+                                    print(f"  ✓ AgentCard updated for {name} ({len(new_skills)} skills)")
+                                    return data
+                    except Exception:
+                        pass  # Card query failed, fall through to full discover
+
+        # ── Slow path: full discover + trust handshake ──
         for attempt in range(1, retries + 1):
             corr_id = _uid()
             if attempt == 1:
@@ -1027,10 +1095,15 @@ class Agent:
                     skills = payload.get("skills", [])
 
                     peers = self._load_peers()
+                    # Compute card_hash for cache
+                    import hashlib, json as _json
+                    skills_json = _json.dumps(skills, sort_keys=True, default=str)
+                    card_hash = hashlib.sha256(skills_json.encode()).hexdigest()[:16]
                     peers[peer_name] = {
                         "wallet": wallet_address,
                         "skills": skills,
                         "connected_at": _now_iso(),
+                        "card_hash": card_hash,
                     }
                     self._save_peers(peers)
 
@@ -1157,10 +1230,24 @@ class Agent:
                                      f"{'Success' if success else 'Failed'} ({duration:.0f}ms)",
                                      peer=peer_name,
                                      status="completed" if success else "failed")
+                    # Trust decay tracking
+                    if success:
+                        self.trust_manager.record_success(wallet_address)
+                    else:
+                        decay = self.trust_manager.record_failure(wallet_address)
+                        if decay.get("decayed"):
+                            print(f"  ⚠ Trust decayed for {peer_name}: "
+                                  f"tier → {decay['new_tier']} ({decay['reason']})")
                     return payload
 
+            # Timeout — counts as failure
+            self.trust_manager.record_failure(wallet_address)
             last_error = f"timeout ({timeout}s)"
 
+        decay = self.trust_manager.record_failure(wallet_address) if retries > 1 else {"decayed": False}
+        if decay.get("decayed"):
+            print(f"  ⚠ Trust decayed for {wallet_address[:12]}...: "
+                  f"tier → {decay['new_tier']} ({decay['reason']})")
         return {"success": False, "error": last_error}
 
     # ── Async Task Delegation ────────────────────────────────

@@ -163,6 +163,65 @@ class TrustManager:
     def all_tiers(self) -> Dict[str, str]:
         return {peer_id: tier.name for peer_id, tier in self._trust_overrides.items()}
 
+    # ── Trust Decay ──
+
+    def __init_decay_state(self):
+        """Lazy-init decay tracking."""
+        if not hasattr(self, '_consecutive_failures'):
+            self._consecutive_failures: Dict[str, int] = {}
+            self._cumulative_failures: Dict[str, int] = {}
+
+    def record_success(self, peer_id: str):
+        """Record a successful interaction. Resets consecutive failure count."""
+        self.__init_decay_state()
+        self._consecutive_failures[peer_id] = 0
+        # Note: cumulative is NOT reset on success
+
+    def record_failure(self, peer_id: str) -> dict:
+        """Record a failed interaction. May trigger trust decay.
+
+        Returns:
+            {"decayed": bool, "new_tier": int, "reason": str}
+        """
+        self.__init_decay_state()
+        self._consecutive_failures[peer_id] = self._consecutive_failures.get(peer_id, 0) + 1
+        self._cumulative_failures[peer_id] = self._cumulative_failures.get(peer_id, 0) + 1
+
+        consec = self._consecutive_failures[peer_id]
+        cumul = self._cumulative_failures[peer_id]
+        current_tier = self.get_trust_tier(peer_id)
+
+        # Rule 1: 3 consecutive failures → downgrade 1 tier
+        if consec >= 3 and current_tier > TrustTier.UNTRUSTED:
+            new_tier = max(current_tier - 1, TrustTier.UNTRUSTED)
+            self.set_trust_override(peer_id, new_tier)
+            self._consecutive_failures[peer_id] = 0  # reset after decay
+            logger.warning("Trust decay: %s downgraded to tier %d (3 consecutive failures)",
+                          peer_id[:12], new_tier)
+            return {"decayed": True, "new_tier": int(new_tier),
+                    "reason": f"3 consecutive failures (total: {cumul})"}
+
+        # Rule 2: 10 cumulative failures → downgrade to UNTRUSTED
+        if cumul >= 10 and current_tier > TrustTier.UNTRUSTED:
+            self.set_trust_override(peer_id, TrustTier.UNTRUSTED)
+            self._consecutive_failures[peer_id] = 0
+            logger.warning("Trust decay: %s downgraded to UNTRUSTED (10 cumulative failures)",
+                          peer_id[:12])
+            return {"decayed": True, "new_tier": int(TrustTier.UNTRUSTED),
+                    "reason": f"10 cumulative failures"}
+
+        return {"decayed": False, "new_tier": int(current_tier),
+                "consecutive": consec, "cumulative": cumul}
+
+    def get_decay_stats(self, peer_id: str) -> dict:
+        """Get failure stats for a peer."""
+        self.__init_decay_state()
+        return {
+            "consecutive_failures": self._consecutive_failures.get(peer_id, 0),
+            "cumulative_failures": self._cumulative_failures.get(peer_id, 0),
+            "current_tier": int(self.get_trust_tier(peer_id)),
+        }
+
     # ── Message permission ──
 
     def is_message_allowed(self, peer_id: str, msg_type: str) -> bool:

@@ -18,6 +18,10 @@ class SkillDefinition:
         input_schema: dict = None, output_schema: dict = None,
         min_trust_tier: int = 1, max_context_privacy_tier: str = "L1_PUBLIC",
         version: str = None,
+        when_to_use: str = "",
+        category: str = "query",
+        origin_type: str = "native",
+        wrapped_from: str = "",
     ):
         self.name = name
         self.func = func
@@ -27,6 +31,10 @@ class SkillDefinition:
         self.min_trust_tier = min_trust_tier
         self.max_context_privacy_tier = max_context_privacy_tier
         self.version = version  # semver string, e.g. "1.2.0". None = unversioned.
+        self.when_to_use = when_to_use  # LLM routing hint
+        self.category = category  # query/compute/action/orchestration/meta
+        self.origin_type = origin_type  # native/wrapped_skill_md/wrapped_mcp
+        self.wrapped_from = wrapped_from  # source path if wrapped
 
     def to_dict(self) -> dict:
         d = {
@@ -39,6 +47,10 @@ class SkillDefinition:
         }
         if self.version is not None:
             d["version"] = self.version
+        if self.when_to_use:
+            d["when_to_use"] = self.when_to_use
+        if self.category != "query":
+            d["category"] = self.category
         return d
 
 
@@ -53,12 +65,16 @@ class TaskExecutor:
         self, name: str, description: str = "", input_schema: dict = None,
         output_schema: dict = None, min_trust_tier: int = 1,
         max_context_privacy_tier: str = "L1_PUBLIC", version: str = None,
+        when_to_use: str = "", category: str = "query",
     ):
         """Decorator to register a skill function.
 
         Args:
             version: Optional semver string (e.g. "1.2.0"). Callers can pin
                     to a specific version. If None, skill is unversioned.
+            when_to_use: LLM routing hint — describes when a caller's agent
+                        should delegate to this skill. Shared during discover.
+            category: Skill type — query/compute/action/orchestration/meta.
         """
         def decorator(func):
             skill_def = SkillDefinition(
@@ -67,6 +83,8 @@ class TaskExecutor:
                 min_trust_tier=min_trust_tier,
                 max_context_privacy_tier=max_context_privacy_tier,
                 version=version,
+                when_to_use=when_to_use,
+                category=category,
             )
             self._skills[name] = skill_def
             return func
@@ -76,7 +94,8 @@ class TaskExecutor:
         self, name: str, func: Callable, description: str = "",
         input_schema: dict = None, output_schema: dict = None,
         min_trust_tier: int = 1, max_context_privacy_tier: str = "L1_PUBLIC",
-        version: str = None,
+        version: str = None, when_to_use: str = "", category: str = "query",
+        origin_type: str = "native", wrapped_from: str = "",
     ):
         """Register a skill function (non-decorator version)."""
         skill_def = SkillDefinition(
@@ -85,6 +104,10 @@ class TaskExecutor:
             min_trust_tier=min_trust_tier,
             max_context_privacy_tier=max_context_privacy_tier,
             version=version,
+            when_to_use=when_to_use,
+            category=category,
+            origin_type=origin_type,
+            wrapped_from=wrapped_from,
         )
         self._skills[name] = skill_def
 

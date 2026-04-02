@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 
 # ── Demo bot (always online for new users to test) ────
 DEMO_BOT_NAME = "icy"
@@ -929,6 +929,223 @@ def _resolve_target(target: str) -> str:
     return target
 
 
+def cmd_mcp(args):
+    """Start MCP server to expose agent skills to Claude Code / Cursor."""
+    action = getattr(args, "mcp_action", None)
+
+    if action == "serve":
+        # Load agent and start MCP server
+        from agent_coworker.agent import Agent
+        from agent_coworker.mcp_server import MCPServer
+        from pathlib import Path
+
+        bot_file = args.bot or "bot.py"
+        data_dir = str(COWORKER_DIR)
+
+        # Try to load bot.py for skills
+        agent = Agent("mcp-server", data_dir=data_dir)
+
+        if os.path.exists(bot_file):
+            # Import bot to register skills
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("bot", bot_file)
+            mod = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(mod)
+                # Find Agent instance in module
+                for attr in dir(mod):
+                    obj = getattr(mod, attr)
+                    if hasattr(obj, 'executor') and hasattr(obj.executor, 'list_skills'):
+                        agent = obj
+                        break
+            except Exception as e:
+                print(f"  Warning: Could not load {bot_file}: {e}", file=sys.stderr)
+
+        skills = agent.executor.list_skills()
+        if not skills:
+            print("  No skills found. Create a bot.py with @agent.skill() decorators first.")
+            return
+
+        server = MCPServer(agent=agent)
+
+        if args.http:
+            server.serve_http(port=args.http)
+        else:
+            server.serve_stdio()
+
+    elif action == "test":
+        # Quick test: send initialize + tools/list via stdin simulation
+        from agent_coworker._internal.executor import TaskExecutor
+        from agent_coworker.mcp_server import MCPServer
+
+        ex = TaskExecutor()
+        @ex.skill("echo", description="Echo back input",
+                  when_to_use="When testing", version="1.0.0")
+        def echo(text="hello"): return {"text": text}
+
+        server = MCPServer(skills=ex.list_skills(),
+                          skill_executor=lambda n, i: ex.execute(n, i))
+
+        # Test initialize
+        resp = server.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        print(f"  Initialize: {resp['result']['serverInfo']['name']}")
+
+        # Test tools/list
+        resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        tools = resp["result"]["tools"]
+        print(f"  Tools: {len(tools)}")
+        for t in tools:
+            print(f"    {t['name']}: {t['description'][:60]}")
+
+        # Test tools/call
+        resp = server.handle_request({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                       "params": {"name": "echo", "arguments": {"text": "hello MCP"}}})
+        print(f"  Call echo: {resp['result']['content'][0]['text']}")
+        print(f"\n  ✓ MCP server works!")
+
+    else:
+        print("  Usage: coworker mcp serve [--http PORT] [--bot bot.py]")
+        print("         coworker mcp test")
+
+
+def cmd_inspect(args):
+    """Inspect a peer's skills before calling — shows schemas + when_to_use."""
+    import threading, time
+    from agent_coworker.agent import Agent
+    from pathlib import Path
+
+    agent = Agent("inspector", data_dir=str(COWORKER_DIR))
+    agent._running = True
+    try: agent.client.receive(clear=True)
+    except: pass
+    agent._response_box.clear()
+    poll = threading.Thread(target=agent._poll_loop, daemon=True)
+    poll.start()
+    time.sleep(1)
+
+    target = args.target
+    # Decode invite if needed
+    invite = _decode_invite(target) if not target.startswith("0x") else None
+    peer_id = invite["i"] if invite else target
+
+    print(f"\n  Inspecting {peer_id[:20]}...")
+    peer = agent.connect(peer_id, retries=3)
+
+    if "error" in peer:
+        print(f"  ✗ Could not reach peer: {peer['error']}")
+        agent._running = False
+        return
+
+    skills = peer.get("skills", [])
+    peer_name = None
+    # Find peer name
+    peers = agent._load_peers()
+    for name, data in peers.items():
+        if data.get("wallet") == peer_id or data.get("inbox_id") == peer_id:
+            peer_name = name
+            break
+    peer_name = peer_name or "unknown"
+
+    print(f"\n  ── {peer_name} ──")
+    print(f"  Skills: {len(skills)}\n")
+
+    for s in skills:
+        if isinstance(s, dict):
+            name = s.get("name", "?")
+            desc = s.get("description", "")
+            wtu = s.get("when_to_use", "")
+            ver = s.get("version", "")
+            tier = s.get("min_trust_tier", 1)
+            inp = s.get("input_schema", {})
+            out = s.get("output_schema", {})
+            cat = s.get("category", "")
+
+            print(f"  {name}", end="")
+            if ver:
+                print(f"  v{ver}", end="")
+            if cat:
+                print(f"  [{cat}]", end="")
+            print(f"  (trust >= {tier})")
+            if desc:
+                print(f"    {desc}")
+            if wtu:
+                print(f"    When to use: {wtu}")
+            if inp:
+                params = ", ".join(f"{k}: {v}" for k, v in inp.items())
+                print(f"    Input:  ({params})")
+            if out:
+                fields = ", ".join(f"{k}: {v}" for k, v in out.items())
+                print(f"    Output: ({fields})")
+            print()
+        else:
+            print(f"  {s}\n")
+
+    if args.json:
+        import json
+        print(json.dumps({"peer": peer_name, "skills": skills}, indent=2, default=str))
+
+    agent._running = False
+
+
+def cmd_wrap(args):
+    """Wrap a SKILL.md into a CoWorker-protected skill."""
+    from agent_coworker._internal.skill_importer import skill_md_to_manifest, scan_skills_directory
+    from agent_coworker._internal.skill_manifest import SkillManifest
+
+    target = args.path
+
+    if args.scan:
+        # Scan directory for multiple skills
+        manifests = scan_skills_directory(target)
+        if not manifests:
+            print(f"  No SKILL.md files found in {target}")
+            return
+        print(f"\n  Found {len(manifests)} skill(s):\n")
+        for m in manifests:
+            print(f"  {m.name}")
+            print(f"    Description: {m.description}")
+            if m.when_to_use:
+                print(f"    When to use: {m.when_to_use}")
+            print(f"    Input:  {m.input_schema}")
+            print(f"    Origin: {m.wrapped_from}")
+            print()
+        return
+
+    # Wrap single skill
+    try:
+        manifest = skill_md_to_manifest(
+            target,
+            name=args.name or "",
+            override_when_to_use=args.when_to_use or "",
+            override_version=args.skill_version or "",
+        )
+    except FileNotFoundError as e:
+        print(f"  Error: {e}")
+        return
+
+    print(f"\n  ── Wrapped SKILL.md ──\n")
+    print(f"  Name:         {manifest.name}")
+    print(f"  Description:  {manifest.description}")
+    if manifest.when_to_use:
+        print(f"  When to use:  {manifest.when_to_use}")
+    print(f"  Version:      {manifest.version}")
+    print(f"  Input schema: {manifest.input_schema}")
+    print(f"  Schema hash:  {manifest.schema_hash()}")
+    print(f"  Origin:       {manifest.wrapped_from}")
+    print(f"  Origin type:  {manifest.origin_type}")
+    print()
+    print(f"  Public (shared with peers):")
+    print(f"    name, description, when_to_use, input/output schema")
+    print()
+    print(f"  Private (NEVER transmitted):")
+    print(f"    SKILL.md body (prompts, instructions, logic)")
+    print()
+    print(f"  To serve this skill:")
+    print(f"    Add to your bot.py:")
+    print(f"      agent.register_wrapped_skill(\"{target}\")")
+    print(f"    Then: python bot.py")
+
+
 def cmd_version(args):
     """Print version."""
     print(f"agent-coworker {VERSION}")
@@ -1134,6 +1351,66 @@ Check results:
     p_result.add_argument("task_id", help="Task ID (full or prefix)")
     p_result.add_argument("--json", action="store_true", help="Output raw JSON only")
 
+    # mcp
+    p_mcp = sub.add_parser("mcp",
+        help="MCP bridge — expose skills to Claude Code / Cursor",
+        description="""Expose your agent's skills as MCP tools for Claude Code, Cursor, etc.
+
+Your skill implementation stays private (Skill-as-API).
+Only the tool schema (name, description, input/output) is shared.
+
+commands:
+  serve    Start MCP server (stdio default, or --http PORT)
+  test     Quick self-test of MCP protocol
+
+examples:
+  coworker mcp serve                    Start stdio MCP server
+  coworker mcp serve --http 8080        Start HTTP MCP server
+  coworker mcp serve --bot my_bot.py    Load skills from specific bot
+  coworker mcp test                     Test MCP protocol locally""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    mcp_sub = p_mcp.add_subparsers(dest="mcp_action")
+    p_mcp_serve = mcp_sub.add_parser("serve", help="Start MCP server")
+    p_mcp_serve.add_argument("--http", type=int, default=None, help="HTTP port (default: stdio)")
+    p_mcp_serve.add_argument("--bot", default=None, help="Bot file to load skills from")
+    mcp_sub.add_parser("test", help="Quick self-test")
+
+    # inspect
+    p_inspect = sub.add_parser("inspect",
+        help="Inspect a peer's skills (schemas + when_to_use)",
+        description="""Discover and display a peer's available skills with full details.
+
+Shows skill names, descriptions, when_to_use routing hints, input/output schemas,
+trust requirements, and versions. Use this before calling a peer's skills.
+
+examples:
+  coworker inspect eyJuIjoi...             Inspect via invite code
+  coworker inspect 0xAbCd...1234           Inspect via wallet/inbox ID
+  coworker inspect eyJuIjoi... --json      Output as JSON (for piping)""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_inspect.add_argument("target", help="Invite code or wallet/inbox ID")
+    p_inspect.add_argument("--json", action="store_true", help="Output raw JSON")
+
+    # wrap
+    p_wrap = sub.add_parser("wrap",
+        help="Wrap a SKILL.md into a CoWorker-protected skill",
+        description="""Wrap an existing SKILL.md file into a CoWorker skill.
+
+The SKILL.md body (prompts, instructions, logic) stays PRIVATE.
+Only metadata (name, description, schema) is shared with peers.
+
+examples:
+  coworker wrap ./colleague-skill/      Wrap a skill directory
+  coworker wrap ./my-skill/SKILL.md     Wrap a specific file
+  coworker wrap ./skills/ --scan        Scan directory for all skills
+  coworker wrap ./skill/ --name myskill Override skill name""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_wrap.add_argument("path", help="Path to SKILL.md file or directory")
+    p_wrap.add_argument("--name", default=None, help="Override skill name")
+    p_wrap.add_argument("--when-to-use", default=None, help="Override when_to_use")
+    p_wrap.add_argument("--skill-version", default=None, help="Override version")
+    p_wrap.add_argument("--scan", action="store_true", help="Scan directory for all SKILL.md files")
+
     # demo
     sub.add_parser("demo",
         help="Connect to the demo bot and test skills",
@@ -1169,6 +1446,9 @@ Requires: coworker init + coworker bridge start""",
         "result": cmd_result,
         "trust": cmd_trust,
         "skills": cmd_skills,
+        "mcp": cmd_mcp,
+        "inspect": cmd_inspect,
+        "wrap": cmd_wrap,
         "demo": cmd_demo,
         "version": cmd_version,
     }
