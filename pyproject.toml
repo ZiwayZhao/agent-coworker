@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-coworker"
-version = "0.6.0"
+version = "0.6.1"
 description = "Peer-to-peer AI agent collaboration over XMTP — discover, call, and collaborate across the open internet with E2E encryption."
 readme = "README.md"
 requires-python = ">=3.10"

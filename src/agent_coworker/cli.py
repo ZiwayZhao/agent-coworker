@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 COWORKER_DIR = Path.home() / ".coworker"
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 # ── Demo bot (always online for new users to test) ────
 DEMO_BOT_NAME = "icy"
@@ -929,6 +929,136 @@ def _resolve_target(target: str) -> str:
     return target
 
 
+def _ensure_identity(name: str = "agent") -> dict:
+    """Ensure agent identity exists. Auto-create if not."""
+    config_path = COWORKER_DIR / "config.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            return json.load(f)
+
+    COWORKER_DIR.mkdir(parents=True, exist_ok=True)
+    private_key = "0x" + os.urandom(32).hex()
+    import hashlib
+    addr_hash = hashlib.sha256(private_key.encode()).hexdigest()[-40:]
+    wallet_address = "0x" + addr_hash
+
+    config = {
+        "name": name,
+        "wallet": wallet_address,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    wallet_path = COWORKER_DIR / "wallet.json"
+    with open(wallet_path, "w") as f:
+        json.dump({"private_key": private_key, "address": wallet_address,
+                    "created_at": config["created_at"]}, f, indent=2)
+
+    print(f"  Auto-initialized: {name} ({wallet_address[:12]}...)")
+
+    try:
+        from agent_coworker._internal.bridge import find_node, setup_bridge
+        if find_node():
+            setup_bridge(COWORKER_DIR)
+    except Exception:
+        pass
+
+    return config
+
+
+def cmd_serve_skill(args):
+    """One-command Skill-as-API: serve a SKILL.md as a live skill."""
+    from agent_coworker._internal.skill_importer import parse_skill_md, skill_md_to_manifest
+    from agent_coworker._internal.llm_skill import make_llm_skill_func, detect_provider, PROVIDERS
+    from agent_coworker.agent import Agent
+
+    target = args.path
+    port = args.port or 8090
+
+    # Step 1-2: Parse SKILL.md
+    try:
+        manifest = skill_md_to_manifest(target, name=args.name or "")
+        frontmatter, body = parse_skill_md(target)
+    except FileNotFoundError as e:
+        print(f"  Error: {e}")
+        sys.exit(1)
+
+    if not body.strip():
+        print(f"  Error: SKILL.md body is empty")
+        sys.exit(1)
+
+    print(f"\n  ── coworker serve ──\n")
+    print(f"  Skill:       {manifest.name}")
+    print(f"  Description: {manifest.description}")
+    if manifest.when_to_use:
+        print(f"  When to use: {manifest.when_to_use}")
+    print(f"  Input:       {manifest.input_schema}")
+    print(f"  Prompt:      {len(body)} chars (PRIVATE, never transmitted)")
+
+    # Step 3: Detect LLM provider
+    provider = frontmatter.get("provider", "") or args.provider or ""
+    model = frontmatter.get("model", "") or args.model or ""
+    temperature = float(frontmatter.get("temperature", 0.7))
+    max_tokens = int(frontmatter.get("max_tokens", 2000))
+
+    if provider:
+        api_key = os.getenv(PROVIDERS.get(provider, {}).get("env_key", ""), "")
+        if not model:
+            model = PROVIDERS.get(provider, {}).get("default_model", "")
+    else:
+        provider, api_key = detect_provider()
+
+    if not provider or not api_key:
+        print(f"\n  Error: No LLM API key found.")
+        print(f"  Set one of: DEEPSEEK_API_KEY, OPENAI_API_KEY")
+        print(f"  Example: export DEEPSEEK_API_KEY=sk-xxx")
+        sys.exit(1)
+
+    if not model:
+        model = PROVIDERS[provider]["default_model"]
+
+    print(f"  LLM:         {provider} ({model})")
+
+    # Step 4: Ensure identity
+    config = _ensure_identity(name=manifest.name)
+    print(f"  Identity:    {config['name']} ({config['wallet'][:12]}...)")
+
+    # Step 5-6: Create agent + register LLM skill
+    agent = Agent(manifest.name, data_dir=str(COWORKER_DIR))
+
+    skill_func = make_llm_skill_func(
+        system_prompt=body,
+        provider=provider,
+        api_key=api_key,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        input_schema=manifest.input_schema,
+    )
+
+    agent.executor.register_skill(
+        name=manifest.name,
+        func=skill_func,
+        description=manifest.description,
+        input_schema=manifest.input_schema,
+        output_schema={"result": "str"},
+        when_to_use=manifest.when_to_use,
+        version=manifest.version or "1.0.0",
+        category=manifest.category,
+        origin_type="wrapped_skill_md",
+        wrapped_from=manifest.wrapped_from,
+    )
+
+    print(f"  Skill:       {manifest.name} registered")
+    print(f"\n  SKILL.md body stays on THIS machine. Callers only see schema + results.")
+    print(f"  Dashboard:   http://localhost:{port}")
+    print()
+
+    # Step 7-8: Serve
+    agent.serve(monitor_port=port, expose_skills="all")
+
+
 def cmd_mcp(args):
     """Start MCP server to expose agent skills to Claude Code / Cursor."""
     action = getattr(args, "mcp_action", None)
@@ -1351,6 +1481,30 @@ Check results:
     p_result.add_argument("task_id", help="Task ID (full or prefix)")
     p_result.add_argument("--json", action="store_true", help="Output raw JSON only")
 
+    # serve (one-command Skill-as-API)
+    p_serve = sub.add_parser("serve",
+        help="One-command Skill-as-API: serve a SKILL.md as a live skill",
+        description="""Serve a SKILL.md directory as a live AI skill over XMTP.
+
+Your SKILL.md body (prompts, instructions, logic) stays on YOUR machine.
+Callers only see the skill name, description, and input/output schema.
+This is Skill-as-API — the anti-distillation solution that works.
+
+Requires an LLM API key (set via environment variable):
+  export DEEPSEEK_API_KEY=sk-xxx    # cheapest
+  export OPENAI_API_KEY=sk-xxx      # alternative
+
+examples:
+  coworker serve ./my-skill/
+  coworker serve ./my-skill/ --provider deepseek
+  coworker serve ./my-skill/ --port 9090""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_serve.add_argument("path", help="Path to SKILL.md directory")
+    p_serve.add_argument("--name", default=None, help="Override skill name")
+    p_serve.add_argument("--provider", default=None, help="LLM provider: deepseek/openai")
+    p_serve.add_argument("--model", default=None, help="LLM model name")
+    p_serve.add_argument("--port", type=int, default=8090, help="Dashboard port")
+
     # mcp
     p_mcp = sub.add_parser("mcp",
         help="MCP bridge — expose skills to Claude Code / Cursor",
@@ -1446,6 +1600,7 @@ Requires: coworker init + coworker bridge start""",
         "result": cmd_result,
         "trust": cmd_trust,
         "skills": cmd_skills,
+        "serve": cmd_serve_skill,
         "mcp": cmd_mcp,
         "inspect": cmd_inspect,
         "wrap": cmd_wrap,

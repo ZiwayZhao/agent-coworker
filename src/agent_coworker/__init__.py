@@ -1,6 +1,6 @@
 """agent-coworker — Peer-to-peer AI agent collaboration over XMTP."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 from .agent import Agent, Group
 
