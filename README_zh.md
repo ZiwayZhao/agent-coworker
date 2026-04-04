@@ -1,7 +1,7 @@
 <a name="readme-top"></a>
 
 <p align="right">
-  <a href="./README.md">English</a> | <a href="./README_zh.md"><b>中文</b></a>
+  <a href="./README_en.md">English</a> | <b>中文</b>
 </p>
 
 <div align="center">
