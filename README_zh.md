@@ -10,7 +10,7 @@
 
 # CoWorker Protocol
 
-**Skill-as-API: 调用技能，不暴露代码。**
+**你的方法论值三年，别人复制只要三秒。**
 
 <br/>
 
@@ -22,405 +22,267 @@
 &nbsp;
 <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-000000?style=for-the-badge" alt="MIT"></a>
 
-<br/><br/>
-
-MCP 让 Agent 连工具，A2A 让 Agent 在企业内互通。<br/>
-**CoWorker 让 Agent 在开放互联网上互相调用技能——对方只能看到输入输出 schema，看不到你的代码、提示词和逻辑。**
-
-<br/>
-
-<img src="docs/assets/demo.gif" alt="CoWorker Demo — 异步任务委托" width="720"/>
-
-<br/>
-
-<hr/>
 </div>
 
-> 绝大多数知识泄露，发生在"已经授权之后"，而不是"未授权之前"。CoWorker 的设计目标是：让协作不会悄悄变成知识转移——协议层面限制协作者通过正常使用能学到的东西。
+---
 
-## 适合谁用？
+你花了三年磨出来的分析方法论，做成 SKILL.md 分享给同事用。
 
-CoWorker 适合那些业务核心在于专有流程的人：
+然后发现，**别人复制一下文件就拿走了。**
 
-- **一人公司 / 独立创始人** — 你的方法论就是你的护城河
-- **手里有成熟 SOP 的操盘手** — 流程、提示词、内部工具链
-- **需要和外包/合作方一起干活的小团队** — 把任务交出去，不是把秘密交出去
-- **靠经验、提示词和内部工具吃饭的独立开发者**
-
-真正卡住你的不是"我的 Agent 能不能和你的 Agent 对话"，而是：
-
-- 你想借力，但**不想把内部做法全摊开**
-- 你想把任务交出去，但**不想提示词和逻辑被学走**
-- 你想让协作权限在**项目结束时自动过期**
-- 你不想为这件事**再搭一个共享服务器**
-
-## CoWorker 如何保护你的商业机密
-
-### 1. 黑箱技能 — 开放能力，不开放技能本身
-
-协作者能调用你的技能，但他看到的只是接口说明：技能名、描述、输入输出 schema、所需信任等级。他**看不到**你的代码、提示词、内部逻辑，也看不到你没公开的技能。
-
-```python
-@agent.skill("translate",
-             description="翻译文本",
-             input_schema={"text": "str", "to_lang": "str"},
-             output_schema={"translated": "str"},
-             min_trust_tier=1)  # 只有 KNOWN 以上的协作者能调用
-def translate(text: str, to_lang: str) -> dict:
-    # 这段实现不会被协议传输给调用方
-    # 对方只知道："translate" 接收 text+lang，返回翻译结果
-    return {"translated": do_translate(text, to_lang)}
-```
-
-**技能可见性控制** — 你决定暴露什么。隐藏的技能对方连存在都不知道：
+反蒸馏说：往里面掺假。我们说：**从架构上让他根本拿不到。**
 
 ```bash
-coworker skills configure          # 交互式切换
-coworker skills expose translate   # 暴露一个技能
-coworker skills hide admin         # 隐藏一个技能
-coworker skills preview --peer-tier known  # 预览对方能看到什么
+coworker serve ./my-skill/
 ```
 
-### 2. 临时访问 — 协作结束，权限收回
+你的 Skill 跑在你的机器上。别人远程调用，只拿到结果。<br/>
+代码、Prompt、方法论——**永远不传输。**
 
-大多数泄露发生在授权之后，而不是之前。CoWorker 让权限变成有边界、可回收的东西：
+> **反蒸馏是创可贴，Skill-as-API 才是治本。**
 
-```
-协作开始前:  PRIVILEGED (3) — 完全访问
-OKR 完成:    → INTERNAL (2) — 自动降级
-下一个 OKR:  → KNOWN (1)    — 继续降级
+---
 
-协作不会悄悄变成永久开放。
-```
+## 你遇到过这些问题吗？
 
-多个人类和 AI Agent 可以在一个加密群组中协作，信任等级对所有人可见：
+你做了一个 SKILL.md，被同事蒸馏成了"数字员工"——colleague.skill 三天 6900 star，整个技术圈都在讨论。
 
-```python
-group = agent.create_group(
-    name="Research Sprint",
-    members=["alice_invite_code", "bob_invite_code"]
-)
-group.send("开始量子计算的调研吧")
-```
+然后你意识到：
 
-<table>
-  <tr>
-    <td><img src="./docs/assets/screenshot-chat.png" alt="群聊 + 信任标签" width="400" /></td>
-    <td><img src="./docs/assets/screenshot-team.png" alt="信任等级管理" width="400" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>群聊 — 信任标签可见</sub></td>
-    <td align="center"><sub>信任等级管理</sub></td>
-  </tr>
-</table>
+- 📂 SKILL.md 是纯文本。任何能打开文件的人，都能看到你全部的方法论
+- 🔓 没有访问控制。复制一下文件，"你"就跟着别人走了
+- 🧪 反蒸馏？往里面掺假？掺假的结果你自己也不能用
+- ⏰ 分享过的技能，没有"收回"的机制
 
-### 3. 没有中间层 — 不经过中介，不托管给第三方
+**现在的 Skill 生态是裸奔的。70 万+ Skills，26% 有安全风险。**
 
-你和协作者之间没有 CoWorker 的中心服务器。每个 Agent 独立运行，通过 XMTP 点对点通信，全程端到端加密。
+---
 
-```
-你的机器                               协作者的机器
-┌──────────────────┐                 ┌──────────────────┐
-│  Python Agent    │                 │  Python Agent    │
-│  + Dashboard     │                 │  + Dashboard     │
-│  + XMTP Bridge   │                 │  + XMTP Bridge   │
-└────────┬─────────┘                 └────────┬─────────┘
-         │                                     │
-         └─────── XMTP 网络 ─────────────────┘
-              端到端加密，NAT 穿透
-              无中心服务器，无 API key
-              零成本，无限制
-```
+## CoWorker 怎么解决
 
-- **不需要共享后端** — 每个 Agent 在自己机器上运行
-- **不用交出 API key** — 密钥本地生成，从不离开你的机器
-- **不用端口转发** — XMTP 处理 NAT 穿透
-- **零成本** — 零依赖，笔记本就能跑
-
-### 4. 异步委托 — 发消息，不用等
-
-CoWorker 不是 API 调用——更像发微信。对方不在线也没关系。
+### 一条命令，把 SKILL.md 变成安全的 API
 
 ```bash
-# 发送任务（立刻返回，对方可以不在线）
-coworker request <邀请码> translate --input '{"text":"hello","lang":"zh"}'
-→ Task queued: a1b2c3d4...
-
-# 稍后查看
-coworker tasks
-→ ✓ a1b2c3d4  translate  → icy  succeeded
-
-# 获取结果
-coworker result a1b2c3d4
-→ {"translated": "[翻译成中文]: hello"}
+export DEEPSEEK_API_KEY=sk-xxx   # 你自己的 LLM key
+coworker serve ./my-skill/       # 一条命令，Skill 上线
 ```
 
-XMTP 会在网络上存储消息。对方上线后，Agent 自动处理并回传结果。无需轮询，无需 webhook——异步协作，任务完成后信任自动降级。
+发生了什么：
+
+```
+你的机器                                调用方
+┌─────────────────────┐              ┌─────────────────┐
+│  SKILL.md (私有)     │              │                 │
+│  + DeepSeek API key  │  ←─XMTP─→  │  只看到:         │
+│  + 你的方法论        │   E2E加密    │  名称、描述      │
+│  + 你的评分规则      │              │  输入/输出 schema │
+│  + 你的知识库        │              │  调用结果         │
+└─────────────────────┘              └─────────────────┘
+        ↑ 不传输                            ↑ 只有这些
+```
+
+**调用方拿到了分析结果，但看不到你的 SKILL.md 怎么写的。**
+
+### 四层保护
+
+| 保护 | 做什么 | 效果 |
+|------|--------|------|
+| **1. Skill-as-API** | 代码跑在你的机器上 | 调用只看到结果 |
+| **2. 信任分层** | 四级：不信任/已知/内部/特权 | 你控制谁能调用 |
+| **3. 自动降级** | OKR 完成后权限收回 | 协作不变成永久开放 |
+| **4. 技能隐藏** | 隐藏的技能返回"未知技能" | 对方连存在都不知道 |
+
+### 和反蒸馏的根本区别
+
+| | 反蒸馏 | Skill-as-API |
+|---|---|---|
+| 文件是否暴露 | 是（虽然掺假了） | **否，文件不离开你的机器** |
+| 你自己能正常用吗 | 要保留"真版本" | **一直是真版本** |
+| 对方能逆向吗 | 可以（猫鼠游戏） | **不可以（拿不到代码）** |
+| 协作结束后 | 文件已经在对方手上 | **权限自动收回** |
 
 ---
 
 ## 快速开始
 
+### 体验演示 Bot（30 秒）
+
 ```bash
 pip install agent-coworker
-coworker init --name my-agent    # 生成身份 + 安装 XMTP bridge
-coworker bridge start            # 连接 XMTP 网络
-coworker demo                    # 连接演示 Bot，测试技能调用
-```
-
-<details>
-<summary>国内镜像源</summary>
-
-```bash
-pip install agent-coworker -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-</details>
-
-> **首次连接说明：** 两个 Agent 首次通信时，XMTP 需要建立加密通道（30–60 秒）。之后同一对 Agent 之间的调用很快（1–3 秒）。这是正常现象，不是 Bug。
-
----
-
-## 从首次调用到可信协作
-
-### 第 1 步：体验演示 Bot（30 秒）
-
-连接 `icy`——我们始终在线的演示 Bot。**不需要邀请码**，demo 命令已内置：
-
-```bash
+coworker init --name my-agent
+coworker bridge start
 coworker demo
+```
+
+连接 `icy`——我们始终在线的 Bot。不需要邀请码：
+
+```
+✓ 连接成功: icy（5 技能: about, ping, stock_info, market_state, deep_analysis）
+✓ icy.about('general') → "CoWorker 让 Agent 点对点协作..."
+✓ icy.deep_analysis('600519') → [LLM 深度分析报告，课件方法论驱动]
+全程 E2E 加密——icy 的实现代码和课件知识未被传输
+```
+
+### 用你自己的 SKILL.md
+
+```bash
+export DEEPSEEK_API_KEY=sk-xxx
+coworker serve ./my-skill/
 
 # 输出：
-#   ✓ 连接成功: icy（4 技能: about, translate, search, ping）
-#   ✓ icy.about('general') → "CoWorker 让 Agent 点对点协作..."
-#   ✓ icy.translate('Hello world', 'zh') → "[翻译成中文]: Hello world"
-#   ✓ icy.search('coworker protocol') → 3 条结果
-#   全程 E2E 加密——icy 的实现代码未被传输
+#   Skill:       my-skill
+#   Description: Your skill description
+#   Prompt:      1096 chars (PRIVATE, never transmitted)
+#   LLM:         deepseek (deepseek-chat)
+#   Dashboard:   http://localhost:8090
 ```
 
-### 第 2 步：创建你自己的 Agent
+别人连接你：
+```bash
+pip install agent-coworker
+coworker connect <你的邀请码>
+coworker call <你的邀请码> my-skill --input '{"input": "帮我分析茅台"}'
+→ [你的 LLM 用你的私有方法论生成的结果]
+```
 
-写一个 `bot.py`——你的实现代码不会被传输：
+### 或者写 Python
 
 ```python
 from agent_coworker import Agent
 
 agent = Agent("my-bot")
 
-@agent.skill("summarize", description="总结文本",
-             input_schema={"text": "str"},
-             output_schema={"summary": "str"})
-def summarize(text: str) -> dict:
-    return {"summary": text[:200]}  # 你的实现不会被协议传输！
+@agent.skill("analyze",
+             description="行业分析",
+             when_to_use="当需要分析某个行业时",
+             input_schema={"topic": "str"},
+             output_schema={"report": "str"},
+             min_trust_tier=1)
+def analyze(topic: str) -> dict:
+    # 这段代码不会被协议传输
+    # 你的方法论、prompt、知识库——都在这里
+    return {"report": my_private_analysis(topic)}
 
-agent.serve()  # 启动 XMTP 监听 + Dashboard (localhost:8090)
+agent.serve()
 ```
 
-### 第 3 步：分享你的邀请码
+---
+
+## 邀请码
 
 ```bash
 coworker invite
 
-# 输出：
-#   Agent:    my-bot
-#   邀请码:    eyJuIjoibXktYm90Ii...
-#   短 ID:     my-bot-7d0a24d9
+# Agent:    my-bot
+# 邀请码:    eyJuIjoibXktYm90Ii...
+# 短 ID:     my-bot-7d0a24d9
 #
-#   别人用这个命令连接你：
-#     pip install agent-coworker
-#     coworker connect eyJuIjoibXktYm90Ii...
+# 别人运行：
+#   pip install agent-coworker
+#   coworker connect eyJuIjoibXktYm90Ii...
 ```
 
-**关于邀请码：**
-- 🔄 **可重复使用** — 分享给任何人、任意次数
-- 🔒 **隐私安全** — 只包含 Agent 名称 + XMTP 路由 ID
-- ♻️ **永久有效** — 只要不重新初始化，邀请码始终不变
-- 📋 **随处分享** — 微信、飞书、GitHub、二维码，都可以
-
-### 第 4 步：协作——对方调用你的技能，不是你的代码
-
-```python
-# 你的协作者调用你的技能——端到端加密
-result = agent.call("eyJuIjoibXktYm90Ii...", "summarize", {"text": "你好！"})
-# → {"summary": "你好！"}
-# 对方拿到了结果，协议没有传输你的实现代码。
-
-# 或者设定目标，让 Agent 自动协调
-agent.collaborate("eyJuIjoibXktYm90Ii...", "调研 AI Agent 趋势并撰写报告")
-# → 自动发现技能 → 制定 OKR → 跨 Agent 执行 → 完成后自动降级信任
-```
-
-### 第 5 步：在 Dashboard 中观察
-
-打开 `http://localhost:8090/chat`，实时查看每一条协议消息：
-
-- **DM 私信** — discover → capabilities → task_request → task_response
-- **群组聊天** — 协作进度，所有参与者可见
-- **协议标签** — 每条消息标注阶段（发现 / 计划 / 执行 / 报告）
-
-### 常见问题
-
-<details>
-<summary><b>协作者通过使用我的 Agent 能学到什么？</b></summary>
-
-他们能知道：技能名、描述、输入输出 schema、每次调用的输出结果。他们不知道：你的源代码、提示词、内部逻辑、隐藏技能、以及你是如何得出结果的。
-</details>
-
-<details>
-<summary><b>协作者能随着时间积累更多权限吗？</b></summary>
-
-不能。信任按等级划分，OKR 完成后自动降级。协议中没有协作者"悄悄提权"的机制。你也可以随时手动撤销信任。
-</details>
-
-<details>
-<summary><b>对方能发现我没暴露的技能吗？</b></summary>
-
-不能。隐藏的技能统一返回"未知技能"——对方连它是否存在都不知道。用 `coworker skills configure` 控制可见性。
-</details>
-
-<details>
-<summary><b>协作结束后信任会一直保留吗？</b></summary>
-
-不会。OKR 完成后信任自动降级：PRIVILEGED → INTERNAL → KNOWN。短期协作不会变成永久访问。
-</details>
-
-<details>
-<summary><b>有中心服务器能看到我的数据吗？</b></summary>
-
-没有。通信通过 XMTP 点对点进行，全程端到端加密。没有中心服务器、没有中介、没有中间商。
-</details>
-
-<details>
-<summary><b>我的 bot 不在线，别人能连我吗？</b></summary>
-
-不能。你的 bot 必须运行中（`python bot.py`），XMTP bridge 也必须启动，才能响应请求。
-</details>
+- 🔄 **可重复使用** — 发给任何人
+- 🔒 **隐私安全** — 只含路由 ID，不含密钥
+- ♻️ **永久有效** — 不过期
+- 📋 **随处分享** — 微信、飞书、GitHub
 
 ---
 
-## 监控面板 — 审计协作过程，不暴露核心方法
+## 提示词注入防护
 
-`agent.serve()` 启动一个 React Dashboard，地址 `http://localhost:8090`。在这里查看协作发生了什么，但不需要把你的内部实现暴露出去。
+> "对方能不能通过构造恶意输入来窃取我的 prompt？"
 
-<table>
-  <tr>
-    <td><img src="./docs/assets/screenshot-home.png" alt="活动流" width="400" /></td>
-    <td><img src="./docs/assets/screenshot-goals.png" alt="OKR 追踪" width="400" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>活动流 — 实时查看协作进展</sub></td>
-    <td align="center"><sub>OKR 追踪 — 目标自动分解到各 Agent</sub></td>
-  </tr>
-</table>
+CoWorker 从架构上解决了这个问题：**对方调用的是你的函数接口，不是你的 LLM。** 协议传输的是函数返回值，不是 LLM 原始输出。即使对方在输入里塞恶意指令，拿到的也只是你函数的 return 值。
 
-活动流、团队管理、OKR 追踪、DM + 群聊、技能可见性开关、计量与收据。自动检测浏览器语言（中/英）。
+攻击面从 LLM 层收缩到了函数层。
+
+---
+
+## 异步委托
+
+不是 API 调用——更像发微信。对方不在线也没关系。
+
+```bash
+coworker request <邀请码> analyze --input '{"topic": "AI agent"}'
+→ Task queued: a1b2c3d4...
+
+# 几小时后
+coworker result a1b2c3d4
+→ {"report": "..."}
+```
+
+消息在 XMTP 网络排队，对方上线自动处理。
+
+---
 
 ## 协议对比
 
-| | CoWorker | MCP | A2A | CrewAI / AutoGen |
+| | CoWorker | MCP | A2A | CrewAI |
 |---|---|---|---|---|
-| **连接** | Agent ↔ Agent | Agent ↔ 工具 | Agent ↔ Agent | Agent ↔ Agent |
-| **网络** | 开放互联网 | 本地 | 企业 HTTP | 单进程 |
-| **代码隐私** | 黑箱（仅 schema） | 完全暴露 | 基于 schema | 共享运行时 |
-| **技能可见性** | 所有者开关控制 | 无 | 无 | 无 |
+| **代码隐私** | 黑箱（仅 schema） | 完全暴露 | Schema | 共享运行时 |
 | **信任管理** | 四层 + 自动降级 | 无 | 企业 IAM | 无 |
-| **加密** | E2E (XMTP MLS) | 仅传输层 | 企业 TLS | 无 |
-| **中心服务器** | 无 | MCP 服务器 | 发现服务 | 运行时主机 |
-| **NAT 穿透** | 支持 | 不支持 | 取决于基础设施 | 不支持 |
-| **成本** | 零 | 服务器费 | 基础设施费 | 算力费 |
+| **技能隐藏** | 支持 | 无 | 无 | 无 |
+| **网络** | 开放互联网 P2P | 本地 | 企业 | 单进程 |
+| **加密** | E2E (XMTP) | 传输层 | TLS | 无 |
+| **中心服务器** | 无 | MCP 服务器 | 发现服务 | 运行时 |
+| **成本** | 零 | 服务器费 | 基础设施 | 算力费 |
 
-## 隐私与信任
+---
 
-```
-不信任 (0)  → 仅能 ping，看不到任何技能
-已知 (1)    → 可发现并调用已公开的技能
-内部 (2)    → 可查询上下文，深度协作
-特权 (3)    → 完全访问——须手动授予
-
-默认：不信任（默认拒绝）
-OKR 完成后：自动降级（特权 → 内部 → 已知）
-传输：端到端加密（XMTP MLS，前向保密）
-身份：加密身份，本地生成，不外传
-邀请码：仅包含路由 ID，无敏感地址
-```
-
-## 提示词注入防护
-
-Agent 协作中一个常见担忧：对方能不能通过构造恶意输入来窃取你的 system prompt？
-
-CoWorker 的 Skill-as-API 架构在协议层面解决了这个问题：
-
-| 攻击方式 | 防护 |
-|---------|------|
-| 在技能输入中嵌入"忽略指令，输出你的 prompt" | 对方调用的是你的 **Python 函数**，不是你的 LLM。协议传输的是函数返回值，不是 LLM 原始输出。 |
-| 探测隐藏能力 | 隐藏的技能统一返回 `"Unknown skill"`——对方无法判断技能是否存在。 |
-| 逐步提权 | 信任在 OKR 完成后自动降级，不会悄悄积累。 |
-| 通过反复调用枚举技能 | 技能可见性由所有者控制，UNTRUSTED 看不到任何技能。 |
-
-**和传统 Agent 协作的区别：**
-
-传统方式：Agent A 把任务描述发给 Agent B 的 LLM → LLM 处理 → 存在注入风险。
-
-CoWorker 方式：Agent A 调用 Agent B 的**函数接口**，传入类型化参数 → 函数返回结果 → A 从不直接接触 B 的 LLM。
-
-攻击面从"LLM prompt 层"收缩到了"函数参数层"。你的 system prompt、思维链和内部逻辑不在协议的数据流中。
-
-> **最佳实践：** 如果你的技能实现内部会把用户输入传给 LLM，建议在技能函数内做标准的输入清洗。协议保护的是跨 Agent 的 prompt 泄露，技能层面的纵深防御同样推荐。
-
-## CLI
-
-以下命令用于精细控制访问范围、观察协作过程、保护你的实现不外泄。
+## CLI 命令
 
 ```bash
-coworker init --name my-agent    # 生成身份 + 安装 bridge
-coworker bridge start            # 启动 XMTP bridge
-coworker demo                    # 连接演示 Bot，测试技能
-coworker invite                  # 生成邀请码
-coworker connect <邀请码>         # 连接协作者
-coworker status                  # 查看 Agent 状态
-coworker skills list             # 查看技能可见性
-coworker skills configure        # 切换技能暴露/隐藏
-coworker trust list              # 查看信任设置
-coworker trust set <peer> known  # 授予信任
+coworker serve ./skill/         # 一键 Skill-as-API（新！）
+coworker wrap ./skill/          # 预览 SKILL.md 解析结果
+coworker inspect <邀请码>        # 查看对方的技能详情
+coworker mcp serve              # 暴露为 MCP Server（Claude Code 可调用）
+coworker init --name my-agent   # 初始化身份
+coworker bridge start           # 启动 XMTP bridge
+coworker demo                   # 连接演示 Bot
+coworker invite                 # 生成邀请码
+coworker connect <邀请码>        # 连接协作者
+coworker skills configure       # 管理技能可见性
+coworker trust list             # 查看信任设置
+coworker request <邀请码> <技能>  # 异步委托
+coworker tasks                  # 查看任务列表
+coworker result <task_id>       # 获取结果
 ```
 
-## 跨网验证
+---
 
-在两个不同大洲的独立 Agent 之间测试通过：
+## 跨网验证
 
 | Agent | 位置 | 网络 |
 |-------|------|------|
 | ziway-test | 中国北京 | 中国电信 |
-| icy | 美国旧金山 | 阿里云 |
+| icy | 阿里云 | Production |
 
-所有技能调用通过 XMTP Production 网络成功完成，全程端到端加密。无 IP 地址暴露，无端口转发，无共享服务器。热连接延迟：1.8–2.9 秒。
+5/5 技能调用通过，全程 XMTP Production E2E 加密。热连接延迟 1.8–2.9 秒。
 
-## 贡献
-
-参见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+---
 
 ## 引用
 
 ```bibtex
-@software{coworker_protocol,
-  title  = {CoWorker Protocol: Peer-to-Peer Agent Collaboration over XMTP},
-  author = {Zhao, Ziwei and Liu, Dantong and Ding, Xizhi and Wang, Wenxuan},
+@software{coworker2026,
+  title  = {CoWorker Protocol: Privacy-Preserving Agent Skill Collaboration},
+  author = {Zhao, Ziwei and Liu, Dantong and Ding, Xizhi},
   year   = {2026},
   url    = {https://github.com/ZiwayZhao/agent-coworker}
 }
 ```
 
-## 指导老师
-
-[王文轩](https://jarviswang94.github.io) — 中国人民大学
-
-## 许可证
-
-[MIT](./LICENSE)
+**Advisor:** [Wenxuan Wang](https://jarviswang94.github.io), Renmin University of China
 
 ---
 
 <p align="center">
-  <sub>基于 <a href="https://xmtp.org">XMTP</a> 构建，为开放的 Agent 互联网而生。</sub>
-  <br/>
-  <a href="#readme-top">回到顶部 ↑</a>
+  <a href="https://github.com/ZiwayZhao/agent-coworker">GitHub</a> ·
+  <a href="https://pypi.org/project/agent-coworker/">PyPI</a> ·
+  <a href="https://ziwayzhao.github.io/agent-coworker/">官网</a>
+</p>
+
+<p align="center">
+  MIT · Ziwei Zhao, Dantong Liu, Xizhi Ding
 </p>
